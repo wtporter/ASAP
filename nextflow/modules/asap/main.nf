@@ -27,10 +27,9 @@ process MASK_PRIMERS {
     tuple val(sample_id), path("${bamfile.getBaseName()}_primerMasked.bam"), path("${bamfile.getBaseName()}_primerMasked.bam.bai"), emit: mask_primers_output
     tuple val(sample_id), path("primer_masking.tsv"), path("primer_masking.log"), emit: mask_primers_logging
 
+    script:
     def mask_bam_string = params.mask_bam ? "--mask-bam" : "--no-mask-bam"
     def ponly_string = params.primer_only ? "--primer-only" : "--no-primer-only"
-
-    script:
     """
     maskPrimers.py -b ${bamfile} -p ${primer_file} --wiggle ${params.wiggle} ${mask_bam_string} ${ponly_string} 
     """
@@ -81,8 +80,23 @@ process PROCESS_BAM {
     tuple val(sample_id), path("${sample_id}.xml"), emit: xml_output
 
     script:
+    // Create a string variable that is either the flag or empty
+    def wg_flag = params.whole_genome ? "--whole-genome" : ""
+    
     """
-    newBamProcessor.py -j ${assay_json} -b ${bamfile} -d ${params.depth} --breadth ${params.breadth} -p ${params.proportion} -m ${params.mutation_depth} --min-base-qual ${params.min_base_qual} --consensus-proportion ${params.consensus_proportion} --fill-gaps ${params.fill_gaps} --mark-deletions ${params.mark_deletions} -o ${sample_id}.xml
+    newBamProcessor.py \\
+        -j ${assay_json} \\
+        -b ${bamfile} \\
+        -d ${params.depth} \\
+        --breadth ${params.breadth} \\
+        -p ${params.proportion} \\
+        -m ${params.mutation_depth} \\
+        --min-base-qual ${params.min_base_qual} \\
+        --consensus-proportion ${params.consensus_proportion} \\
+        --fill-gaps ${params.fill_gaps} \\
+        --mark-deletions ${params.mark_deletions} \\
+        ${wg_flag} \\
+        -o ${sample_id}.xml
     """
 }
 
