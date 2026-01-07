@@ -1,5 +1,7 @@
 .. |copy|   unicode:: U+000A9 .. COPYRIGHT SIGN
 
+THIS IS NOT UPDATED FOR CURRENT NEXTFLOW VERSION.....
+
 Amplicon Sequencing Analysis Pipeline (ASAP)
 ========================================
 
