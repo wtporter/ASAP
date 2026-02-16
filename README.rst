@@ -13,7 +13,7 @@ Not Updated...
 
 USAGE:
 ========================================
-*nextflow run \*/ASAP/nextflow/main.nf*
+*nextflow run \*/ASAP/nextflow/main.nf OPTIONS*
 ------------------------------
 
 *Input/Output Options:*
