@@ -129,9 +129,9 @@ Pipeline Summary
 Requirements
 ============
 
-- **Nextflow** ≥ 23.04 (tested on 25.04.6) — must be available in your active environment
+- **Nextflow** 25.10.4 — provided via ``ASAP_nextflow_env.yml``
 - **nf-schema** plugin 2.5.1 — loaded automatically via ``nextflow.config`` on first run
-- **nf-test** ≥ 0.9.0 — required only to run the test suite
+- **nf-test** 0.9.5 — provided via ``ASAP_nextflow_env.yml``; required only to run the test suite
 - **Singularity / Apptainer** (for containerized alignment and QC tools)
 - **Conda / Mamba** (environments are built automatically from module YMLs — no manual setup required)
 - A reference file in FASTA, GenBank, Excel (.xlsx), or JSON format
@@ -179,10 +179,15 @@ Installation
 
    # Clone the repository
    git clone https://github.com/wtporter/ASAP.git
-   cd ASAP/nextflow
+   cd ASAP
 
-   # Activate the conda environment that contains Nextflow (and nf-test for testing)
-   conda activate <your-nextflow-env>
+   # Create the Nextflow environment from the provided YAML (includes Nextflow 25.10.4 and nf-test 0.9.5)
+   conda env create -f ASAP_nextflow_env.yml
+
+   # Activate the environment
+   conda activate ASAP_nextflow_env
+
+   cd nextflow
 
    # Verify Nextflow is available
    nextflow -version
@@ -190,11 +195,12 @@ Installation
    # View full parameter help
    nextflow run main.nf --help
 
-Nextflow and nf-test must be available in your active environment — install them via
-conda or follow the `Nextflow installation guide <https://www.nextflow.io/docs/latest/install.html>`_.
-The **nf-schema** plugin (``nf-schema@2.5.1``) is declared in ``nextflow.config`` and
-downloaded automatically on first run. Singularity containers and all Conda environments
-for pipeline steps are also resolved automatically — no further manual setup is required.
+The ``ASAP_nextflow_env.yml`` file at the repository root creates a conda environment
+named ``ASAP_nextflow_env`` containing Nextflow 25.10.4 and nf-test 0.9.5 (required
+only for running the test suite). The **nf-schema** plugin (``nf-schema@2.5.1``) is
+declared in ``nextflow.config`` and downloaded automatically on first run. Singularity
+containers and all Conda environments for pipeline steps are also resolved automatically
+— no further manual setup is required.
 
 ----
 

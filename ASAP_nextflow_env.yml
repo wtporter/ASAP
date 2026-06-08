@@ -1,0 +1,9 @@
+name: ASAP_nextflow_env
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - mamba
+  - nextflow=25.10.4
+  - nf-test=0.9.5
