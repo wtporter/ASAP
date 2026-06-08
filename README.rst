@@ -178,7 +178,7 @@ Installation
 .. code-block:: bash
 
    # Clone the repository
-   git clone https://github.com/TGenNorth/ASAP.git
+   git clone https://github.com/wtporter/ASAP.git
    cd ASAP/nextflow
 
    # Activate the conda environment that contains Nextflow (and nf-test for testing)
