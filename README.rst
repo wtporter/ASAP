@@ -33,6 +33,15 @@ antimicrobial resistance (AMR) detection and viral whole-genome assembly.
 3. Multi-reference analysis for species differentiation or cross-panel quality control
 4. High-resolution iSNV detection in mixed infections or heteroresistant populations
 
+**Continued Development:**
+
+1. Elimination of conda env creation from module YMLs, replaced by containerized tools and a single Nextflow environment for pipeline execution.
+2. Re-evaluate region of interest functionality. Likely to be replaced by an automated system for complex SNP -> amino acid annotation based on GenBank CDS and seperate development for a linked SNP process that creates a list of linked SNPs based on co-occurrence in reads, with the option to report linked SNPs in the final SNP table.
+3. Expanded figure generation and QC reporting.
+4. Automated bed file creation for primer masking based on primers, allowing reference search and bed file creation.
+5. Expansion of test datasets and tutorials for user education and reference.
+6. Consider centralization of reports into single HTML report.
+
 ----
 
 Overview
