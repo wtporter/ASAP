@@ -2,7 +2,7 @@
 #SBATCH --job-name=ASAP_EtE_tests
 #SBATCH -c 1
 #SBATCH --mem=8G
-#SBATCH --time=4-00:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=logs/nf-test/ASAP_End_To_End_Testing_%j.out
 #SBATCH --error=logs/nf-test/ASAP_End_To_End_Testing_%j.err
 #
