@@ -336,6 +336,8 @@ BWA and Bowtie2 also emit ``flagstat`` files for MultiQC.
 +------------------------+------------+-------------------------------------------+
 | ``--aligner_extra_args``| ``""``    | Additional arguments passed to the aligner|
 +------------------------+------------+-------------------------------------------+
+| ``--filter_secondary_alignments`` | ``true`` | Drop secondary/supplementary alignment records (``samtools view -F 0x900``) immediately after alignment, so downstream read counts (``mapped_reads``, ``amplicon_reads``, ``aligned_reads``, depth/breadth) stay consistent. Set to ``false`` to retain all alignment records emitted by the aligner. |
++------------------------+------------+-------------------------------------------+
 
 Step 3 — Primer Masking *(optional)*
 --------------------------------------

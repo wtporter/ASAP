@@ -22,7 +22,8 @@
         "adapter_fasta": { "type": ["string", "null"], "default": null, "description": "FASTA file containing adapter sequences for trimming. If unset, defaults to the bundled Illumina adapter file at `../asap/illumina_adapters_all.fasta`." },
         "fastp_extra_args": { "type": "string", "default": "", "description": "Extra args for fastp or fastplong." },
         "aligner": { "type": "string", "enum": ["bowtie2", "bwa", "minimap2"], "default": "bowtie2", "description": "Read alignment tool." },
-        "aligner_extra_args": { "type": "string", "default": "", "description": "Extra args for aligner." }
+        "aligner_extra_args": { "type": "string", "default": "", "description": "Extra args for aligner." },
+        "filter_secondary_alignments": { "type": "boolean", "default": true, "description": "Drop secondary/supplementary alignment records (samtools view -F 0x900) immediately after alignment, so downstream read counts (mapped_reads, amplicon_reads, aligned_reads, depth/breadth) stay consistent. Disable to retain all alignment records emitted by the aligner." }
       }
     },
     "primer_masking_trimming": {

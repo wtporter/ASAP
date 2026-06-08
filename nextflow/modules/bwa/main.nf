@@ -35,7 +35,10 @@ process ALIGN_BWA {
     def extra_args = params.aligner_extra_args ?: ""
     // In Groovy, a list (reads) joined by a space handles one or two files perfectly for BWA
     def input_reads = reads.join(' ')
-    
+    // Drop secondary/supplementary alignment records so downstream read counts
+    // (mapped_reads, amplicon_reads, aligned_reads, depth/breadth) stay consistent
+    def filter_flag = params.filter_secondary_alignments ? '-F 0x900' : ''
+
     """
     # Run bwa mem
     # Note: BWA handles both SE and PE by just passing the file(s) at the end
@@ -44,8 +47,8 @@ process ALIGN_BWA {
         ${extra_args} \\
         ${index_dir}/genome \\
         ${input_reads} \\
-    | samtools view -Sbh - \\
-    | samtools sort -T ${meta.id}-bwa -o ${meta.id}-bwa.bam - 
+    | samtools view -Sbh ${filter_flag} - \\
+    | samtools sort -T ${meta.id}-bwa -o ${meta.id}-bwa.bam -
 
     # Index the bam
     samtools index ${meta.id}-bwa.bam

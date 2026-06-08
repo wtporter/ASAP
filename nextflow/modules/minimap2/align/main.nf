@@ -23,6 +23,9 @@ process MINIMAP2_ALIGN {
     def prefix = task.ext.prefix ?: "${meta.id}"
     def technology = params.technology?.toLowerCase()
     def preset = ""
+    // Drop secondary/supplementary alignment records so downstream read counts
+    // (mapped_reads, amplicon_reads, aligned_reads, depth/breadth) stay consistent
+    def filter_flag = params.filter_secondary_alignments ? '-F 0x900' : ''
 
     if (technology == 'ont') {
         preset = "-x map-ont"
@@ -42,7 +45,7 @@ process MINIMAP2_ALIGN {
         -t $task.cpus \\
         $reference \\
         $reads \\
-        -a | samtools sort -@ ${task.cpus-1} -o ${prefix}.bam -
+        -a | samtools view -bh ${filter_flag} - | samtools sort -@ ${task.cpus-1} -o ${prefix}.bam -
     
     samtools index ${prefix}.bam
 

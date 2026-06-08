@@ -33,7 +33,10 @@ process ALIGN_BOWTIE2 {
     def extra_args = params.aligner_extra_args ?: ""
     // Determine if we use -U (unpaired) or -1/-2 (paired)
     def input_reads = meta.single_end ? "-U ${reads[0]}" : "-1 ${reads[0]} -2 ${reads[1]}"
-    
+    // Drop secondary/supplementary alignment records so downstream read counts
+    // (mapped_reads, amplicon_reads, aligned_reads, depth/breadth) stay consistent
+    def filter_flag = params.filter_secondary_alignments ? '-F 0x900' : ''
+
     """
     # Run bowtie2 using conditional input string
     bowtie2 -x ${index_dir}/bt2_index \\
@@ -41,7 +44,7 @@ process ALIGN_BOWTIE2 {
         ${input_reads} \\
         -p ${task.cpus} \\
         ${extra_args} \\
-    | samtools view -Sbh - \\
+    | samtools view -Sbh ${filter_flag} - \\
     | samtools sort -T ${meta.id}-bt2 -o ${meta.id}-bt2.bam -
 
     # Index the bam file
