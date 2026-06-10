@@ -124,7 +124,7 @@ class Amplicon(object):
     classdocs
     '''
 
-    def __init__(self, sequence, variant_name=None, significance=None, snp=None, regionofinterest=None, percid=None):
+    def __init__(self, sequence, variant_name=None, significance=None, snp=None, percid=None, **kwargs):
         '''
         Constructor
         '''
@@ -133,19 +133,12 @@ class Amplicon(object):
         self.significance = significance
         self.percid = percid
         self.SNPs = []
-        self.ROIs = []
         if snp:
             if isinstance(snp, list):
                 for each_snp in snp:
                     self.add_SNP(each_snp)
             else:
                 self.add_SNP(snp)
-        if regionofinterest:
-            if isinstance(regionofinterest, list):
-                for roi in regionofinterest:
-                    self.add_ROI(roi)
-            else:
-                self.add_ROI(regionofinterest)
 
     def __str__(self):
         output = "Amplicon: "
@@ -156,8 +149,6 @@ class Amplicon(object):
             output += self.sequence+" "
             for snp in self.SNPs:
                 output += "%s, " % snp
-            for roi in self.ROIs:
-                output += "%s, " % roi
             if self.significance:
                 output += "= %s" % self.significance
             output += "}\n"
@@ -210,11 +201,6 @@ class Amplicon(object):
             raise TypeError('Not a valid SNP')
         self.SNPs.append(snp)
 
-    def add_ROI(self, roi):
-        if not isinstance(roi, RegionOfInterest):
-            raise TypeError('Not a valid RegionOfInterest')
-        self.ROIs.append(roi)
-
 class SNP(object):
     '''
     classdocs
@@ -242,59 +228,6 @@ class SNP(object):
         if self._significance:
             return_dict['Significance'] = self._significance
         return return_dict
-
-    @property
-    def significance(self):
-        return self._significance
-
-    @significance.setter
-    def significance(self, value):
-        if value and not isinstance(value, Significance):
-            raise TypeError('Not a valid Significance')
-        self._significance = value
-
-class RegionOfInterest(object):
-    '''
-    classdocs
-    '''
-
-    def __init__(self, position_range, aa_sequence=None, nt_sequence=None, mutations=None, name = None, significance=None):
-        '''
-        Constructor
-        '''
-        self.position_range = position_range
-        self.aa_sequence = aa_sequence
-        self.nt_sequence = nt_sequence
-        self.mutations = mutations
-        self.name = name
-        self.significance = significance
-
-    def as_dict(self):
-        return_dict = {'position_range':self.position_range}
-        if self.aa_sequence:
-            return_dict['aa_sequence'] = self.aa_sequence
-        if self.nt_sequence:
-            return_dict['nt_sequence'] = self.nt_sequence
-        if self.mutations:
-            return_dict['mutations'] = ','.join(self.mutations)
-        if self.name:
-            return_dict['name'] = self.name
-        if self._significance:
-            return_dict['Significance'] = self._significance
-        return return_dict
-
-    @property
-    def mutations(self):
-        return self._mutations
-
-    @mutations.setter
-    def mutations(self, value):
-        import re
-        if not value or re.match('any', value, re.IGNORECASE):
-            value = []
-        else:
-            value = value.split(',')
-        self._mutations = value
 
     @property
     def significance(self):
@@ -372,7 +305,7 @@ class Significance(object):
 #         self._significance = value
 #
 #     def add_operand(self, value):
-#         if not (isinstance(value, Target) or isinstance(value, SNP) or isinstance(value, RegionOfInterest)):
+#         if not (isinstance(value, Target) or isinstance(value, SNP)):
 #             raise TypeError('Not a valid operand')
 #         self.operands.append(value)
 
@@ -501,8 +434,6 @@ def _json_decode(json_dict):
     json_dict = dict((k.lower() if k != 'AND' else 'AND', v) for k,v in json_dict.items())
     if "message" in json_dict:
         return Significance(**json_dict)
-    elif "position_range" in json_dict:
-        return RegionOfInterest(**json_dict)
     elif "position" in json_dict:
         return SNP(**json_dict)
     elif "sequence" in json_dict:
@@ -538,17 +469,12 @@ def _json_encode(obj):
         amplicon_dict = obj.as_dict()
         if obj.SNPs:
             amplicon_dict["SNP"] = obj.SNPs if len(obj.SNPs) > 1 else obj.SNPs[0]
-        if obj.ROIs:
-            amplicon_dict["RegionOfInterest"] = obj.ROIs if len(obj.ROIs) > 1 else obj.ROIs[0]
         if obj.percid:
             amplicon_dict["percid"] = obj.percid
         return amplicon_dict
     if isinstance(obj, SNP):
         snp_dict = obj.as_dict()
         return snp_dict
-    if isinstance(obj, RegionOfInterest):
-        roi_dict = obj.as_dict()
-        return roi_dict
     if isinstance(obj, Significance):
         sig_dict = obj.as_dict()
         return sig_dict

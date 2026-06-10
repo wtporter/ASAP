@@ -71,7 +71,15 @@
         "whole_genome": {"type": "boolean", "default": false, "description": "JSON file uses a whole genome reference, so don't write out the consensus, depth, and proportion arrays for each sample"},
         "combine_output": { "type": "boolean", "default": true, "description": "Whether to combine output files." },
         "stylesheet": { "type": ["string"], "default": "default_stylesheet/ASAP_fulldetails_web.xsl", "description": "XSLT stylesheet for transforming output." },
-        "out_file": { "type": ["string", "null"], "default": null, "description": "Name of the output HTML file." }
+        "out_file": { "type": ["string", "null"], "default": null, "description": "Name of the output HTML file." },
+        "codon_correction": { "type": "boolean", "default": false, "description": "Merge SNPs that fall in the same codon using GenBank CDS annotations. Requires --codon_correction_genbank." },
+        "codon_correction_genbank": { "type": ["string", "null"], "default": null, "description": "GenBank file used to derive codon boundaries for --codon_correction." },
+        "codon_correction_error": { "type": "number", "default": 0.05, "description": "Frequency tolerance (0–1) for complete vs. partial codon-SNP merge." },
+        "codon_correction_min_reads": { "type": "integer", "default": 10, "description": "Minimum spanning reads required to confirm codon-level SNP linkage." },
+        "discover_roi": { "type": "boolean", "default": false, "description": "Annotate each SNP with co-occurring variants detected at the read level (<linked_snps> XML field)." },
+        "discover_roi_min_perc": { "type": "number", "default": 0.1, "description": "Minimum co-occurrence proportion (0–1) to report a linked SNP." },
+        "discover_roi_min_reads": { "type": "integer", "default": 10, "description": "Minimum co-occurring read count to report a linked SNP." },
+        "discover_roi_min_snp_perc": { "type": "number", "default": 0.05, "description": "Minimum variant frequency (0–1) for a SNP to be considered (as an anchor or linked candidate) in discover-roi linkage analysis. Skips low-frequency 'position of interest' SNPs to reduce search space." }
       }
     },
     "asaptools_options": {

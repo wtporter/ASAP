@@ -165,6 +165,20 @@ process PROCESS_BAM {
     def primer_flag   = primer_stats.size()   > 0 ? "--primer-stats ${primer_stats}"     : ""
     def identity_flag = identity_stats.size() > 0 ? "--identity-stats ${identity_stats}" : ""
     def smor_flag     = smor_stats.size()     > 0 ? "--smor-stats ${smor_stats}"         : ""
+    def codon_flag        = params.codon_correction ? "--codon-correction" : ""
+    def codon_gb_flag     = (params.codon_correction && params.codon_correction_genbank)
+                              ? "--codon-correction-genbank ${params.codon_correction_genbank}" : ""
+    def codon_err_flag    = params.codon_correction
+                              ? "--codon-correction-error ${params.codon_correction_error}" : ""
+    def codon_min_flag    = params.codon_correction
+                              ? "--codon-correction-min-reads ${params.codon_correction_min_reads}" : ""
+    def droi_flag         = params.discover_roi ? "--discover-roi" : ""
+    def droi_perc_flag    = params.discover_roi
+                              ? "--discover-roi-min-perc ${params.discover_roi_min_perc}" : ""
+    def droi_min_flag     = params.discover_roi
+                              ? "--discover-roi-min-reads ${params.discover_roi_min_reads}" : ""
+    def droi_min_snp_flag = params.discover_roi
+                              ? "--discover-roi-min-snp-perc ${params.discover_roi_min_snp_perc}" : ""
 
     """
     newBamProcessor.py \\
@@ -184,6 +198,14 @@ process PROCESS_BAM {
         ${identity_flag} \\
         ${smor_flag} \\
         ${wg_flag} \\
+        ${codon_flag} \\
+        ${codon_gb_flag} \\
+        ${codon_err_flag} \\
+        ${codon_min_flag} \\
+        ${droi_flag} \\
+        ${droi_perc_flag} \\
+        ${droi_min_flag} \\
+        ${droi_min_snp_flag} \\
         -o ${sample_id}.xml
     """
 }

@@ -59,6 +59,9 @@ read.ASAP.snps.individual <- function(XML) {
             snp_depth <- "0"; snp_proportion <- "0"; snp_call <- "N/A"
           }
 
+          Merge_Node <- xml_child(SNP_Node, "codon_merge")
+          codon_merge_text <- if (!inherits(Merge_Node, "xml_missing")) xml_text(Merge_Node) else NA_character_
+
           SNP_Info <- data.frame(
             location_depth   = xml_attr(SNP_Node, "depth"),
             snp_name         = xml_attr(SNP_Node, "name"),
@@ -67,7 +70,8 @@ read.ASAP.snps.individual <- function(XML) {
             snp_depth        = snp_depth,
             snp_proportion   = snp_proportion,
             snp_call         = snp_call,
-            snp_distribution = SNP_Dist
+            snp_distribution = SNP_Dist,
+            codon_merge_text = codon_merge_text
           )
 
           Temp <- cbind(Run_Info, Sample_Info, Assay_Info, Amplicon_Info, SNP_Info)

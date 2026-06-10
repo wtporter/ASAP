@@ -165,14 +165,7 @@ def main(argv=None):
                     significance = assayInfo.Significance(message=_strip(row[17].value))
 
                 element = None
-                if _strip(row[14].value):  # Significance attaches to a Region of Interest
-                    sequence = _strip(row[15].value)
-                    positions = _strip(row[14].value)
-                    if _isNT(sequence, positions):
-                        element = assayInfo.RegionOfInterest(position_range=positions, nt_sequence=sequence, mutations=_strip(row[16].value), name=_strip(row[13].value), significance=significance)
-                    else:
-                        element = assayInfo.RegionOfInterest(position_range=positions, aa_sequence=sequence, mutations=_strip(row[16].value), name=_strip(row[13].value), significance=significance)
-                elif _strip(row[10].value):  # Significance attaches to a SNP
+                if _strip(row[10].value):  # Significance attaches to a SNP
                     element = assayInfo.SNP(position=_strip(row[10].value), reference=_strip(row[11].value), variant=_strip(row[12].value), name=_strip(row[9].value), significance=significance)
 
                 if _strip(row[8].value):  # New Amplicon sequence on this row
@@ -182,17 +175,17 @@ def main(argv=None):
                         else:
                             amplicon = _process_fasta_single(_strip(row[8].value))
                             if element:
-                                amplicon.add_SNP(element) if isinstance(element, assayInfo.SNP) else amplicon.add_ROI(element)
+                                if isinstance(element, assayInfo.SNP): amplicon.add_SNP(element)
                             else:
                                 amplicon.significance = significance
                     else:
                         amplicon = assayInfo.Amplicon(sequence=_clean_seq(_strip(row[8].value)), variant_name=_clean_str(_strip(row[7].value)))
                         if element:
-                            amplicon.add_SNP(element) if isinstance(element, assayInfo.SNP) else amplicon.add_ROI(element)
+                            if isinstance(element, assayInfo.SNP): amplicon.add_SNP(element)
                         else:
                             amplicon.significance = significance
                 elif amplicon and element:  # Continuing rows: attach another SNP/ROI to the current Amplicon
-                    amplicon.add_SNP(element) if isinstance(element, assayInfo.SNP) else amplicon.add_ROI(element)
+                    if isinstance(element, assayInfo.SNP): amplicon.add_SNP(element)
 
                 if target and _strip(row[8].value):
                     target.add_amplicon(amplicon)

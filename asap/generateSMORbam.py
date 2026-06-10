@@ -20,6 +20,7 @@ import re
 import argparse
 import logging
 import pysam
+from itertools import groupby
 from operator import attrgetter
 from statistics import mode
 
@@ -32,13 +33,6 @@ __updated__ = '2024-07-11'
 DEBUG = 1
 TESTRUN = 0
 PROFILE = 0
-
-def pairwise(iterable):
-    from itertools import tee
-    "s -> (s0,s1), (s1,s2), (s2, s3), ..."
-    a, b = tee(iterable)
-    next(b, None)
-    return zip(a, b)
 
 def _find_overlap_region(reads):
     start_list = []
@@ -201,12 +195,21 @@ def _write_bam(samdata, out_file, fill_char, base_qual, whole_genome):
         input_reads = len(ref_reads)
         pairs_dropped = 0
         consensus_written = 0
+        singleton_reads = 0
 
-        reads = iter(ref_reads)
-        for read, pair in pairwise(reads):
-            logging.debug("Read:%s, ref_start:%s, ref_end:%s -- Pair:%s, ref_start:%s, ref_end:%s" % (read.query_name, read.reference_start, read.reference_end, pair.query_name, pair.reference_start, pair.reference_end))
-            if read.query_name != pair.query_name:
+        for name, group in groupby(ref_reads, key=attrgetter('query_name')):
+            group = list(group)
+            if len(group) == 1:
+                # No mate aligned to this reference; can't form a SMOR consensus.
+                singleton_reads += 1
                 continue
+            if len(group) != 2:
+                logging.warning("Unexpected %d alignments for %s on %s; dropping" % (len(group), name, ref_name))
+                pairs_dropped += len(group)
+                continue
+
+            read, pair = group
+            logging.debug("Read:%s, ref_start:%s, ref_end:%s -- Pair:%s, ref_start:%s, ref_end:%s" % (read.query_name, read.reference_start, read.reference_end, pair.query_name, pair.reference_start, pair.reference_end))
             if read.reference_end == None or pair.reference_end == None:
                 pairs_dropped += 2
                 continue
@@ -221,30 +224,9 @@ def _write_bam(samdata, out_file, fill_char, base_qual, whole_genome):
 
             start = max(read.reference_start, pair.reference_start)
             end = min(read.reference_end, pair.reference_end)
-            #read1_start = 0
-            #read1_end = 0
-            #read2_start = 0
-            #read2_end = 0
-            #for match in read1_alignment:
-            #    if match[1] == start:
-            #        read1_start = match[0]
-            #    if match[1] == end-1:
-            #        read1_end = match[0]
-            #for match in read2_alignment:
-            #    if match[1] == start:
-            #        read2_start = match[0]
-            #    if match[1] == end-1:
-            #        read2_end = match[0]
-            #read_seq = read.query_sequence[read1_start:read1_end]
-            #pair_seq = pair.query_sequence[read2_start:read2_end]
-            #read_qual = read.query_qualities[read1_start:read1_end]
-            #pair_qual = pair.query_qualities[read2_start:read2_end]
-            #logging.debug("Read_seq:%s -- Pair_seq:%s" % (read_seq, pair_seq))
 
             (consensus, quals, cigar) = _get_consensus(read, pair, start, end, fill_char)
             logging.debug("Consensus:%s" % consensus)
-            #logging.debug("Quals:%s" % quals)
-            #logging.debug("Cigar:%s" % cigar)
             if consensus:
                 new_read = pysam.AlignedSegment()
                 new_read.is_paired = False
@@ -256,11 +238,14 @@ def _write_bam(samdata, out_file, fill_char, base_qual, whole_genome):
                 new_read.query_qualities = quals
                 outdata.write(new_read)
                 consensus_written += 1
+            else:
+                pairs_dropped += 2
 
         smor_stats[ref_name] = {
             'input_reads': input_reads,
             'pairs_dropped': pairs_dropped,
             'consensus_reads': consensus_written,
+            'singleton_reads': singleton_reads,
         }
 
     outdata.close()
@@ -268,9 +253,9 @@ def _write_bam(samdata, out_file, fill_char, base_qual, whole_genome):
     pysam.index(out_file)
 
     with open("smor_stats.tsv", "w") as stats_out:
-        stats_out.write("ref_name\tinput_reads\tpairs_dropped\tconsensus_reads\n")
+        stats_out.write("ref_name\tinput_reads\tpairs_dropped\tconsensus_reads\tsingleton_reads\n")
         for ref, s in smor_stats.items():
-            stats_out.write(f"{ref}\t{s['input_reads']}\t{s['pairs_dropped']}\t{s['consensus_reads']}\n")
+            stats_out.write(f"{ref}\t{s['input_reads']}\t{s['pairs_dropped']}\t{s['consensus_reads']}\t{s['singleton_reads']}\n")
 
     return (out_file)
 

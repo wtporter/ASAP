@@ -12,15 +12,7 @@ import argparse
 import logging
 import pysam
 from operator import attrgetter
-
-def grouped_pairs(iterable):
-    """Groups name-sorted reads into pairs."""
-    it = iter(iterable)
-    for x in it:
-        try:
-            yield x, next(it)
-        except StopIteration:
-            yield x, None
+from itertools import groupby
 
 def _get_consensus(read, pair, fill_char):
     QUAL_DIFF_THRESHOLD = 10
@@ -124,10 +116,20 @@ def _write_bam(samdata, out_file, fill_char):
         input_reads = len(ref_reads)
         pairs_dropped = 0
         consensus_written = 0
+        singleton_reads = 0
 
-        for read, pair in grouped_pairs(ref_reads):
-            if not pair or read.query_name != pair.query_name:
+        for name, group in groupby(ref_reads, key=attrgetter('query_name')):
+            group = list(group)
+            if len(group) == 1:
+                # No mate aligned to this reference; can't form a SMOR consensus.
+                singleton_reads += 1
                 continue
+            if len(group) != 2:
+                logging.warning(f"Unexpected {len(group)} alignments for {name} on {ref_name}; dropping")
+                pairs_dropped += len(group)
+                continue
+
+            read, pair = group
             if read.is_unmapped or pair.is_unmapped:
                 pairs_dropped += 2
                 continue
@@ -151,13 +153,17 @@ def _write_bam(samdata, out_file, fill_char):
                     new_read.mapping_quality = max(read.mapping_quality, pair.mapping_quality)
                     outdata.write(new_read)
                     consensus_written += 1
+                else:
+                    pairs_dropped += 2
             except Exception as e:
                 logging.error(f"Error processing {read.query_name}: {e}")
+                pairs_dropped += 2
 
         smor_stats[ref_name] = {
             'input_reads': input_reads,
             'pairs_dropped': pairs_dropped,
             'consensus_reads': consensus_written,
+            'singleton_reads': singleton_reads,
         }
 
     outdata.close()
@@ -177,9 +183,9 @@ def _write_bam(samdata, out_file, fill_char):
         os.remove(tmp_out)
 
     with open("smor_stats.tsv", "w") as stats_out:
-        stats_out.write("ref_name\tinput_reads\tpairs_dropped\tconsensus_reads\n")
+        stats_out.write("ref_name\tinput_reads\tpairs_dropped\tconsensus_reads\tsingleton_reads\n")
         for ref, s in smor_stats.items():
-            stats_out.write(f"{ref}\t{s['input_reads']}\t{s['pairs_dropped']}\t{s['consensus_reads']}\n")
+            stats_out.write(f"{ref}\t{s['input_reads']}\t{s['pairs_dropped']}\t{s['consensus_reads']}\t{s['singleton_reads']}\n")
 
 def main():
     parser = argparse.ArgumentParser(description="SMOR Consensus Generator with Corrected CIGARs")

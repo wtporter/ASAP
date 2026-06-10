@@ -69,6 +69,47 @@ SNPS <- SNPS %>%
   filter(snp_reference != Call) %>%
   filter(!is.na(snp_proportion))
 
+# --- Expand codon-merged SNPs so both components get AA annotations ---
+# A merged SNP has snp_call like "T|A" and a codon_merge_text column containing
+# both component positions in <ref><pos><var> format (e.g. "C944T 29.5% ..., G943A 10% ...").
+# The XML only stores the first component's position/reference attributes, so the second
+# component must be recovered from codon_merge_text and added as its own rows.
+if ("codon_merge_text" %in% names(SNPS) && any(!is.na(SNPS$codon_merge_text))) {
+  # Work from the pre-expansion original rows (one row per SNP node)
+  merge_source <- SNPS %>%
+    filter(!is.na(codon_merge_text)) %>%
+    select(-SNP, -Call, -n, -snp_proportion, -space_count) %>%
+    distinct(snp_name, assay_name, .keep_all = TRUE)
+
+  if (nrow(merge_source) > 0) {
+    extra_rows <- merge_source %>%
+      mutate(
+        # Extract all <ref><pos><var> tokens from the codon_merge_text
+        components = str_extract_all(codon_merge_text, "[A-Z]\\d+[A-Z]")
+      ) %>%
+      unnest(components) %>%
+      mutate(
+        new_ref = str_sub(components, 1, 1),
+        new_pos = as.numeric(str_extract(components, "\\d+")),
+        new_mut = str_sub(components, -1)
+      ) %>%
+      # Skip the primary component (already in SNPS via base distribution) and reference calls
+      filter(new_pos != as.numeric(snp_position), new_ref != new_mut) %>%
+      mutate(
+        snp_reference = new_ref,
+        snp_position  = new_pos,
+        Call          = new_mut,
+        n             = NA_character_,
+        snp_proportion = NA_real_,
+        SNP           = components,
+        codon_merge_text = NA_character_
+      ) %>%
+      select(-components, -new_ref, -new_pos, -new_mut)
+
+    SNPS <- bind_rows(SNPS, extra_rows)
+  }
+}
+
 # --- Loop Through All GenBank Files ---
 all_amino_acids <- list()
 all_gene_snps <- list()
