@@ -102,8 +102,9 @@ process IDENTITY_FILTER {
     tuple val(sample_id), path("identity_filter_stats.tsv"), emit: identity_filter_stats
 
     script:
+    def filter_pairs_flag = params.filter_pairs ? "" : "--no-filter-pairs"
     """
-    identityFilter.py -b ${bamfile} -i ${params.identity}
+    identityFilter.py -b ${bamfile} -i ${params.identity} ${filter_pairs_flag}
     """
 }
 

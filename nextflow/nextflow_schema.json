@@ -40,7 +40,8 @@
       "title": "Percent Identity Filtering Options",
       "properties": {
         "identity": { "type": ["number", "null"], "description": "Identity threshold for filtering." },
-        "ref_names": {"type": ["string", "array", "null"], "description": "Name(s) of the reference contig(s) for which identity is calculated; if omitted, apply to all contigs."}
+        "ref_names": {"type": ["string", "array", "null"], "description": "Name(s) of the reference contig(s) for which identity is calculated; if omitted, apply to all contigs."},
+        "filter_pairs": { "type": "boolean", "default": true, "description": "If either mate of a read pair fails the identity check on a checked reference, mark both mates as unaligned/discarded. Set to false to filter each mate independently." }
       }
     },
     "smor_options": {
