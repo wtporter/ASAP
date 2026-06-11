@@ -523,20 +523,30 @@ def _build_fragment_allele_table(samdata, positions, ref_name=None):
     same position, the real call wins: `pos_table` and `masked` are kept
     disjoint per position, so each fragment falls into exactly one of them.
 
+    Fragments with a deletion (gap) at a requested position are recorded in
+    `deleted` rather than `pos_table`. These are fragments whose alignment
+    spans the position (the reference base is consumed) but the read itself
+    has a gap there. `pos_table`, `masked`, and `deleted` are kept disjoint
+    per position; a real base call (from either mate) takes priority over a
+    deletion call.
+
     ref_name: restrict fetch to this contig (pass the amplicon reference name).
-    Returns (pos_table, reach, masked):
+    Returns (pos_table, reach, masked, deleted):
         pos_table: {pos: {qname: base, ...}, ...} for each position in `positions`
         reach:     {pos: (min_frag_start, max_frag_end), ...}
         masked:    {pos: {qname, ...}, ...} fragments with an 'N' at pos, and
+                    no real call at pos from either mate
+        deleted:   {pos: {qname, ...}, ...} fragments with a deletion at pos,
                     no real call at pos from either mate
     """
     pos_set = set(positions)
     pos_table = {p: {} for p in pos_set}
     masked = {p: set() for p in pos_set}
+    deleted = {p: set() for p in pos_set}
     reach = {}
 
     if not pos_set:
-        return pos_table, reach, masked
+        return pos_table, reach, masked, deleted
 
     fetch_iter = samdata.fetch(contig=ref_name) if ref_name else samdata.fetch()
     for read in fetch_iter:
@@ -547,26 +557,33 @@ def _build_fragment_allele_table(samdata, positions, ref_name=None):
         frag_end = max(read.reference_end, other_end)
 
         qname = read.query_name
-        for qpos, rpos in read.get_aligned_pairs(matches_only=True):
-            if rpos in pos_set:
-                base = read.query_sequence[qpos].upper()
-                if base == 'N':
-                    # Masked base (e.g. primer trimming) -- the allele here is
-                    # unknown, so this fragment can't inform linkage at rpos.
-                    masked[rpos].add(qname)
-                    continue
-                pos_table[rpos][qname] = base
-                lo, hi = reach.get(rpos, (frag_start, frag_end))
-                reach[rpos] = (min(lo, frag_start), max(hi, frag_end))
+        for qpos, rpos in read.get_aligned_pairs():
+            if rpos not in pos_set:
+                continue
+            if qpos is None:
+                # Deletion in read relative to reference at rpos.
+                deleted[rpos].add(qname)
+                continue
+            base = read.query_sequence[qpos].upper()
+            if base == 'N':
+                # Masked base (e.g. primer trimming) -- the allele here is
+                # unknown, so this fragment can't inform linkage at rpos.
+                masked[rpos].add(qname)
+                continue
+            pos_table[rpos][qname] = base
+            lo, hi = reach.get(rpos, (frag_start, frag_end))
+            reach[rpos] = (min(lo, frag_start), max(hi, frag_end))
 
-    # A fragment's mates can disagree on whether a position is masked (e.g.
-    # only one mate's primer covers an overlap region). If either mate
-    # produced a real base call, treat the fragment as called rather than
-    # masked at that position, regardless of processing order above.
+    # A fragment's mates can disagree on base/masked/deleted state (e.g. one
+    # mate spans a deletion, the other a normal base). If either mate produced
+    # a real base call, that wins; otherwise a deletion call wins over masked.
     for p in pos_set:
-        masked[p] -= set(pos_table[p].keys())
+        called = set(pos_table[p].keys())
+        masked[p] -= called
+        deleted[p] -= called
+        deleted[p] -= masked[p]
 
-    return pos_table, reach, masked
+    return pos_table, reach, masked, deleted
 
 
 def _tally_allele_linkage(pos_table, positions):
@@ -626,7 +643,7 @@ def _snp_variant_freq(snp):
     return count / depth, count
 
 
-def _apply_codon_correction(snp_list, pos_table, cds_features, offset, error_threshold, min_reads):
+def _apply_codon_correction(snp_list, pos_table, deleted, cds_features, offset, error_threshold, min_reads):
     """
     Annotate pairs of SNPs that fall in the same codon (per GenBank CDS
     features) with read-level allele-linkage information.
@@ -644,6 +661,17 @@ def _apply_codon_correction(snp_list, pos_table, cds_features, offset, error_thr
         linkage         - "complete" if abs(freq_a - freq_b) <= error_threshold,
                           else "partial" (carried over from the old
                           complete-merge / codon_link distinction)
+        snp_percentage_linked        - linked_count / (spanning_depth +
+                                        both_deleted) * 100.  Of all reads
+                                        with a definite allele-pair
+                                        determination at both positions (either
+                                        both called bases, or both deleted),
+                                        the percentage showing the linked
+                                        variant pair.  Same value on both
+                                        SNPs' entries for a pair.
+        total_percentage_depth_linked - linked_count / this SNP's own depth
+                                        * 100.  Can differ slightly between
+                                        the two SNPs in a pair.
         combos          - list of {bases, count, percent, type}, one per
                           observed allele combination (from
                           _tally_allele_linkage), ordered by descending count.
@@ -655,6 +683,13 @@ def _apply_codon_correction(snp_list, pos_table, cds_features, offset, error_thr
                           called variant alleles), or "discordant" (anything
                           else, e.g. a fragment carrying only one of the two
                           variants).
+                          linked_count = count of the "variant" combo from
+                          tally + both_deleted (fragments with a deletion at
+                          BOTH positions, from the `deleted` table).  Exactly
+                          one of these is non-zero per pair: tally can never
+                          yield a '_|_' combo (deleted positions have no
+                          callable base in pos_table), so deletion-variant
+                          pairs use both_deleted exclusively.
 
     A SNP can accumulate multiple codon_merges entries if it participates in
     more than one qualifying codon (e.g. overlapping CDS features in
@@ -729,16 +764,30 @@ def _apply_codon_correction(snp_list, pos_table, cds_features, offset, error_thr
             })
         combos.sort(key=lambda c: (-c['count'], c['bases']))
 
+        linked_combo_count = next((c['count'] for c in combos if c['type'] == 'variant'), 0)
+        both_deleted = len(deleted.get(amp_a, set()) & deleted.get(amp_b, set()))
+        linked_count = linked_combo_count + both_deleted
+        total_valid = spanning_depth + both_deleted
+        snp_percentage_linked = linked_count / max(total_valid, 1) * 100
+        depth_a = int(s_a.get('depth', 0))
+        depth_b = int(s_b.get('depth', 0))
+        total_pct_depth_linked_a = linked_count / max(depth_a, 1) * 100
+        total_pct_depth_linked_b = linked_count / max(depth_b, 1) * 100
+
         s_a.setdefault('codon_merges', []).append({
             'linked_snp': s_b['name'],
             'spanning_depth': spanning_depth,
             'linkage': linkage,
+            'snp_percentage_linked': snp_percentage_linked,
+            'total_percentage_depth_linked': total_pct_depth_linked_a,
             'combos': combos,
         })
         s_b.setdefault('codon_merges', []).append({
             'linked_snp': s_a['name'],
             'spanning_depth': spanning_depth,
             'linkage': linkage,
+            'snp_percentage_linked': snp_percentage_linked,
+            'total_percentage_depth_linked': total_pct_depth_linked_b,
             'combos': combos,
         })
 
@@ -912,6 +961,8 @@ def _add_codon_merges_node(snp_node, codon_merges):
             'linked_snp': entry['linked_snp'],
             'spanning_depth': str(entry['spanning_depth']),
             'linkage': entry['linkage'],
+            'snp_percentage_linked': f"{entry['snp_percentage_linked']:.1f}",
+            'total_percentage_depth_linked': f"{entry['total_percentage_depth_linked']:.1f}",
         })
         for combo in entry['combos']:
             ElementTree.SubElement(cm_node, 'combo', {
@@ -1163,9 +1214,9 @@ USAGE
         parser.add_argument("--primer-stats", metavar="FILE", dest="primer_stats", type=argparse.FileType('r'), default=None, help="primer_masking_stats.tsv from MASK_PRIMERS step. [default: none]")
         parser.add_argument("--identity-stats", metavar="FILE", dest="identity_stats", type=argparse.FileType('r'), default=None, help="identity_filter_stats.tsv from IDENTITY_FILTER step. [default: none]")
         parser.add_argument("--smor-stats", metavar="FILE", dest="smor_stats", type=argparse.FileType('r'), default=None, help="smor_stats.tsv from SMOR/SMOR_CORRECTION step. [default: none]")
-        parser.add_argument("--codon-correction", action="store_true", dest="codon_correction", default=False, help="merge SNPs in the same codon using GenBank CDS annotations. Requires --codon-correction-genbank. [default: False]")
+        parser.add_argument("--codon-correction", action="store_true", dest="codon_correction", default=False, help="annotate SNP pairs in the same codon with read-level allele-linkage info (<codon_merge>/<combo>) using GenBank CDS annotations. Requires --codon-correction-genbank. [default: False]")
         parser.add_argument("--codon-correction-genbank", metavar="FILE", dest="codon_correction_genbank", nargs='+', default=None, help="One or more GenBank files for --codon-correction codon boundary derivation. [default: none]")
-        parser.add_argument("--codon-correction-error", dest="codon_correction_error", type=float, default=0.05, help="frequency tolerance (0-1) for complete vs. partial SNP merge. [default: 0.05]")
+        parser.add_argument("--codon-correction-error", dest="codon_correction_error", type=float, default=0.05, help="frequency tolerance (0-1) for 'complete' vs. 'partial' codon_merge linkage classification. [default: 0.05]")
         parser.add_argument("--codon-correction-min-reads", dest="codon_correction_min_reads", type=int, default=10, help="minimum spanning reads to confirm codon linkage. [default: 10]")
         parser.add_argument("--discover-roi", action="store_true", dest="discover_roi", default=False, help="add <linked_snps> field to SNP XML nodes showing read-level co-occurring variants. [default: False]")
         parser.add_argument("--discover-roi-min-perc", dest="discover_roi_min_perc", type=float, default=0.1, help="minimum co-occurrence proportion (0-1) to report a linked SNP. [default: 0.1]")
@@ -1406,19 +1457,19 @@ USAGE
                     # Build a fragment-allele table once per amplicon (single BAM
                     # pass), shared by codon correction and discover-roi to avoid
                     # re-scanning the BAM for every SNP/codon pair.
-                    pos_table, reach, masked = {}, {}, {}
+                    pos_table, reach, masked, deleted = {}, {}, {}, {}
                     if (codon_correction and codon_correction_genbank) or discover_roi:
                         amp_positions = {
                             _translated_to_amp(int(s['position']), offset)
                             for s in amplicon_data['SNPs'] if int(s.get('depth', 0)) > 0
                         }
                         if len(amp_positions) >= 2:
-                            pos_table, reach, masked = _build_fragment_allele_table(samdata, amp_positions, ref_name)
+                            pos_table, reach, masked, deleted = _build_fragment_allele_table(samdata, amp_positions, ref_name)
                     # Apply codon correction (annotate same-codon SNPs via GenBank CDS)
                     if codon_correction and codon_correction_genbank:
                         cds_features = _parse_genbank_cds(codon_correction_genbank, amplicon.sequence)
                         _apply_codon_correction(
-                            amplicon_data['SNPs'], pos_table,
+                            amplicon_data['SNPs'], pos_table, deleted,
                             cds_features, offset, codon_correction_error, codon_correction_min_reads
                         )
                     # Annotate co-occurring SNPs (discover-roi)

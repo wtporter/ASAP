@@ -12,6 +12,8 @@ import sys
 from collections import Counter
 from xml.etree import ElementTree
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from asap.newBamProcessor import (
     CdsFeature,
@@ -76,6 +78,9 @@ def test_complete_merge_codon_annotation():
     codon_merges entry, cross-referencing linked_snp by name,
     spanning_depth==20, linkage=="complete", combos==
     [{"A|A",17,85.0,"reference"}, {"T|T",3,15.0,"variant"}].
+    snp_percentage_linked==15.0 (linked combo count 3 / spanning_depth 20)
+    on both entries, and total_percentage_depth_linked==15.0 (3 / depth 20)
+    on both entries.
     """
     pos_table = _make_pos_table(100, 101, {('A', 'A'): 17, ('T', 'T'): 3})
     snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
@@ -85,7 +90,7 @@ def test_complete_merge_codon_annotation():
     snp_list = [snp_a, snp_b]
     cds = CdsFeature('ORF1', '+', [(100, 103)])
 
-    result = _apply_codon_correction(snp_list, pos_table, [cds], offset=0,
+    result = _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
                                       error_threshold=0.05, min_reads=1)
 
     assert result is None
@@ -107,6 +112,11 @@ def test_complete_merge_codon_annotation():
     ]
     assert cm_b['combos'] == cm_a['combos']
 
+    assert cm_a['snp_percentage_linked'] == 15.0
+    assert cm_b['snp_percentage_linked'] == 15.0
+    assert cm_a['total_percentage_depth_linked'] == 15.0
+    assert cm_b['total_percentage_depth_linked'] == 15.0
+
 
 def test_add_codon_merges_node_xml():
     """Purpose: verify _add_codon_merges_node serializes a codon_merges entry
@@ -116,8 +126,9 @@ def test_add_codon_merges_node_xml():
     Function under test: _add_codon_merges_node -- pure XML serialization.
 
     Test input: a synthetic codon_merges list with one entry
-    (linked_snp="A102T", spanning_depth=20, linkage="complete") containing
-    two combos (a "reference" and a "variant" combo).
+    (linked_snp="A102T", spanning_depth=20, linkage="complete",
+    snp_percentage_linked=15.0, total_percentage_depth_linked=15.0)
+    containing two combos (a "reference" and a "variant" combo).
 
     Expected result: the resulting <codon_merge> element has the expected
     attributes, and its two <combo> children have the expected
@@ -128,6 +139,8 @@ def test_add_codon_merges_node_xml():
         'linked_snp': 'A102T',
         'spanning_depth': 20,
         'linkage': 'complete',
+        'snp_percentage_linked': 15.0,
+        'total_percentage_depth_linked': 15.0,
         'combos': [
             {'bases': 'A|A', 'count': 17, 'percent': 85.0, 'type': 'reference'},
             {'bases': 'T|T', 'count': 3, 'percent': 15.0, 'type': 'variant'},
@@ -137,7 +150,13 @@ def test_add_codon_merges_node_xml():
     _add_codon_merges_node(snp_node, codon_merges)
 
     cm_node = snp_node.find('codon_merge')
-    assert cm_node.attrib == {'linked_snp': 'A102T', 'spanning_depth': '20', 'linkage': 'complete'}
+    assert cm_node.attrib == {
+        'linked_snp': 'A102T',
+        'spanning_depth': '20',
+        'linkage': 'complete',
+        'snp_percentage_linked': '15.0',
+        'total_percentage_depth_linked': '15.0',
+    }
     combos = cm_node.findall('combo')
     assert len(combos) == 2
     assert combos[0].attrib == {'bases': 'A|A', 'count': '17', 'percent': '85.0', 'type': 'reference'}
@@ -178,7 +197,7 @@ def test_partial_merge_codon_annotation():
     snp_list = [snp_a, snp_b]
     cds = CdsFeature('ORF1', '+', [(100, 103)])
 
-    _apply_codon_correction(snp_list, pos_table, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
 
     assert len(snp_list) == 2
@@ -232,7 +251,7 @@ def test_duplicate_cds_boundary_deduped():
     cds_orf1ab = CdsFeature('ORF1ab', '+', [(100, 103), (200, 203)])
     cds_orf1a = CdsFeature('ORF1a', '+', [(100, 103)])
 
-    _apply_codon_correction(snp_list, pos_table, [cds_orf1ab, cds_orf1a], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, [cds_orf1ab, cds_orf1a], offset=0,
                              error_threshold=0.05, min_reads=1)
 
     assert len(snp_a['codon_merges']) == 1
@@ -278,7 +297,7 @@ def test_multi_codon_membership():
 
     cds = CdsFeature('ORFx', '+', [(100, 102), (101, 103)])
 
-    _apply_codon_correction(snp_list, pos_table, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
 
     assert len(snp_left['codon_merges']) == 1
@@ -296,15 +315,15 @@ def test_noop_empty_inputs():
 
     Function under test: _apply_codon_correction -- early-return guard.
     """
-    assert _apply_codon_correction([], {}, [], offset=0,
+    assert _apply_codon_correction([], {}, {}, [], offset=0,
                                     error_threshold=0.05, min_reads=1) is None
 
     snp = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
            'depth': '20', 'basecalls': Counter({'A': 17, 'T': 3})}
     cds = CdsFeature('ORF1', '+', [(100, 103)])
-    assert _apply_codon_correction([snp], {}, [], offset=0,
+    assert _apply_codon_correction([snp], {}, {}, [], offset=0,
                                     error_threshold=0.05, min_reads=1) is None
-    assert _apply_codon_correction([snp], {}, [cds], offset=0,
+    assert _apply_codon_correction([snp], {}, {}, [cds], offset=0,
                                     error_threshold=0.05, min_reads=1) is None
     assert 'codon_merges' not in snp
 
@@ -330,7 +349,7 @@ def test_three_snp_codon_not_annotated():
     snp_list = [snp_a, snp_b, snp_c]
     cds = CdsFeature('ORF1', '+', [(100, 103)])
 
-    _apply_codon_correction(snp_list, {}, [cds], offset=0,
+    _apply_codon_correction(snp_list, {}, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
 
     assert 'codon_merges' not in snp_a
@@ -360,7 +379,7 @@ def test_min_reads_gate_skips_codon():
     snp_list = [snp_a, snp_b]
     cds = CdsFeature('ORF1', '+', [(100, 103)])
 
-    _apply_codon_correction(snp_list, pos_table, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=5)
 
     assert 'codon_merges' not in snp_a
@@ -411,7 +430,7 @@ def test_codon_merge_pairs_excluded_from_linked_snps():
 
     cds = CdsFeature('ORF1', '+', [(100, 103)])
 
-    _apply_codon_correction(snp_list, pos_table, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
     _apply_discover_roi(snp_list, pos_table, reach, masked, offset=0,
                          min_perc=0.0, min_reads=1, min_snp_perc=0.0)
@@ -425,3 +444,54 @@ def test_codon_merge_pairs_excluded_from_linked_snps():
     assert 'codon_merges' not in snp_f
     assert 'G202C' in _linked_names(snp_e)
     assert 'G201C' in _linked_names(snp_f)
+
+
+# ---------------------------------------------------------------------------
+# Case 7: deletion-pair codon -- both SNPs' variants are '_' (e.g. a 2-bp
+# deletion like SC2 Spike Δ22029-22030).  pos_table cannot represent '_|_'
+# (get_aligned_pairs(matches_only=True) drops deleted positions), so
+# both_deleted from the `deleted` table is the only source of linked count.
+# ---------------------------------------------------------------------------
+def test_deletion_pair_codon_annotation():
+    """Purpose: verify that a 2-SNP codon where both variants are deletions
+    ('_') correctly uses the `deleted` table to compute snp_percentage_linked
+    and total_percentage_depth_linked, since pos_table can never represent a
+    '_|_' combo.
+
+    Function under test: _apply_codon_correction.
+
+    Test input: codon spanning amp positions 100/101 (translated 101/102);
+    pos_table with 5 reference A|A fragments (spanning_depth=5);
+    deleted = {100: {'d0','d1','d2','d3'}, 101: {'d1','d2','d3','d4'}}
+    -- 3 reads are deleted at BOTH positions (d1, d2, d3); snp_a depth=8
+    (3 deleted + 5 ref calls), snp_b depth=9 (4 deleted + 5 ref calls);
+    both SNPs' variant is '_'.
+
+    Expected result: combos = [{'A|A', 5, 100.0, 'reference'}] (no variant
+    or discordant combo since pos_table has no deletions); both_deleted=3;
+    total_valid = 5+3=8; snp_percentage_linked = 3/8*100=37.5;
+    total_percentage_depth_linked_a = 3/8*100=37.5;
+    total_percentage_depth_linked_b = 3/9*100=33.3.
+    """
+    pos_table = _make_pos_table(100, 101, {('A', 'A'): 5})
+    deleted = {100: {'d0', 'd1', 'd2', 'd3'}, 101: {'d1', 'd2', 'd3', 'd4'}}
+
+    snp_a = {'name': 'A101_', 'position': '101', 'reference': 'A', 'variant': '_',
+             'depth': '8', 'basecalls': Counter({'_': 3, 'A': 5})}
+    snp_b = {'name': 'A102_', 'position': '102', 'reference': 'A', 'variant': '_',
+             'depth': '9', 'basecalls': Counter({'_': 4, 'A': 5})}
+    snp_list = [snp_a, snp_b]
+    cds = CdsFeature('ORF1', '+', [(100, 103)])
+
+    _apply_codon_correction(snp_list, pos_table, deleted, [cds], offset=0,
+                             error_threshold=0.05, min_reads=1)
+
+    assert len(snp_a['codon_merges']) == 1
+    cm_a = snp_a['codon_merges'][0]
+    cm_b = snp_b['codon_merges'][0]
+
+    assert cm_a['combos'] == [{'bases': 'A|A', 'count': 5, 'percent': 100.0, 'type': 'reference'}]
+    assert cm_a['snp_percentage_linked'] == pytest.approx(37.5)
+    assert cm_b['snp_percentage_linked'] == pytest.approx(37.5)
+    assert cm_a['total_percentage_depth_linked'] == pytest.approx(37.5)
+    assert cm_b['total_percentage_depth_linked'] == pytest.approx(100 * 3 / 9)

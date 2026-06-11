@@ -440,38 +440,59 @@ The core analysis step. ``newBamProcessor.py`` reads the assay JSON and the alig
 - SNPs / iSNVs detected above the proportion and depth thresholds, with per-base distributions
 - Regions of interest (ROI) sequences with DNA and amino acid translations
 - Significance calls based on rules defined in the assay JSON
+- Optional codon-aware allele-linkage (``<codon_merge>``) and read-level
+  co-occurring-variant discovery (``<linked_snps>``)
 
-+--------------------------+----------+----------------------------------------------------------+
-| Parameter                | Default  | Description                                              |
-+==========================+==========+==========================================================+
-| ``--depth``              | ``100``  | Minimum read depth to consider a position covered        |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--breadth``            | ``0.8``  | Minimum breadth of coverage to call an amplicon present  |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--proportion``         | ``0.1``  | Minimum allele frequency to call a SNP / iSNV            |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--mutation_depth``     | ``5``    | Minimum read count to call a SNP / iSNV                  |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--min_base_qual``      | ``5``    | Minimum Phred base quality score                         |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--consensus_proportion``| ``0.8`` | Minimum frequency to call a consensus base (else ``N``)  |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--fill_character``     | ``N``    | Character written at masked / gap positions (used by     |
-|                          |          | SMOR masking and bam_processor)                          |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--fill_gaps``          | ``n``    | Character written at zero-coverage positions in          |
-|                          |          | consensus sequence                                       |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--mark_deletions``     | ``_``    | Character written at deletion positions in consensus     |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--whole_genome``       | ``false``| Skip per-sample consensus/depth arrays (WGS references)  |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--asap_snps``          | ``true`` | Enable ASAP BAM processing (set ``false`` to skip)       |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--combine_output``     | ``true`` | Combine per-sample XMLs and generate HTML report         |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--stylesheet``         | bundled  | XSLT stylesheet for HTML report generation               |
-+--------------------------+----------+----------------------------------------------------------+
++----------------------------------+----------+------------------------------------------------------------+
+| Parameter                        | Default  | Description                                                |
++==================================+==========+============================================================+
+| ``--depth``                      | ``100``  | Minimum read depth to consider a position covered          |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--breadth``                    | ``0.8``  | Minimum breadth of coverage to call an amplicon present    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--proportion``                 | ``0.1``  | Minimum allele frequency to call a SNP / iSNV              |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--mutation_depth``             | ``5``    | Minimum read count to call a SNP / iSNV                    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--min_base_qual``              | ``5``    | Minimum Phred base quality score                           |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--consensus_proportion``       | ``0.8``  | Minimum frequency to call a consensus base (else ``N``)    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--fill_character``             | ``N``    | Character written at masked / gap positions (used by SMOR  |
+|                                  |          | masking and bam_processor)                                 |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--fill_gaps``                  | ``n``    | Character written at zero-coverage positions in consensus  |
+|                                  |          | sequence                                                   |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--mark_deletions``             | ``_``    | Character written at deletion positions in consensus       |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--whole_genome``               | ``false``| Skip per-sample consensus/depth arrays (WGS references)    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--asap_snps``                  | ``true`` | Enable ASAP BAM processing (set ``false`` to skip)         |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--combine_output``             | ``true`` | Combine per-sample XMLs and generate HTML report           |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--stylesheet``                 | bundled  | XSLT stylesheet for HTML report generation                 |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--codon_correction``           | ``false``| Annotate same-codon SNP pairs with read-level allele-      |
+|                                  |          | linkage info (``<codon_merge>``)                           |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--codon_correction_error``     | ``0.05`` | Frequency tolerance (0–1) for 'complete' vs. 'partial'     |
+|                                  |          | codon-merge linkage                                        |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--codon_correction_min_reads`` | ``10``   | Minimum spanning reads to confirm codon-level SNP linkage  |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--discover_roi``               | ``false``| Annotate SNPs with read-level co-occurring variants        |
+|                                  |          | (``<linked_snps>``)                                        |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--discover_roi_min_perc``      | ``0.1``  | Minimum co-occurrence proportion (0–1) to report a linked  |
+|                                  |          | SNP                                                        |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--discover_roi_min_reads``     | ``10``   | Minimum co-occurring read count to report a linked SNP     |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--discover_roi_min_snp_perc``  | ``0.05`` | Minimum variant frequency (0–1) for a SNP to be considered |
+|                                  |          | in discover-roi linkage analysis                           |
++----------------------------------+----------+------------------------------------------------------------+
 
 Step 7 — iVAR Processing *(optional)*
 ---------------------------------------
@@ -612,6 +633,35 @@ indistinguishable from sequencing noise, making it particularly powerful for:
 
 See `Step 5`_ for the distinction between SMOR Masking and SMOR Correction.
 
+Codon-Aware SNP Linkage & Allele-Linkage Discovery
+--------------------------------------------------
+
+Two optional, GenBank-aware analyses annotate each SNP with how its variant allele
+co-occurs with other variants on the same sequencing fragment:
+
+**Codon-aware linkage (``--codon_correction``)** — for SNP pairs that fall within the
+same codon (per GenBank CDS annotations), each SNP is annotated with a
+``<codon_merge>`` element describing how the pair's alleles co-occur on the same
+fragments. Each observed allele combination is reported as a ``<combo>`` and
+classified as:
+
+- ``reference`` — neither variant (both positions match the reference)
+- ``variant`` — both variants together, i.e. the actual combined codon change
+- ``discordant`` — only one of the two variants present (e.g. sequencing noise)
+
+The pair is also flagged as ``complete`` (both SNPs' frequencies agree closely
+enough that they represent the same underlying change) or ``partial``
+(frequencies diverge, suggesting independent or partially-linked events). This
+flows through to ASAP Tools' SNP / Amino Acid table — see below.
+
+**Read-level co-occurrence discovery (``--discover_roi``)** — more general than
+codon-aware linkage, this annotates *any* SNP with a ``<linked_snps>`` list of
+other SNPs (regardless of codon membership) whose variant alleles frequently
+co-occur with it on the same read/fragment. Useful for identifying candidate
+haplotype structure or regions of interest spanning multiple variants.
+
+See `Step 6`_ for full parameter details.
+
 ASAP Tools: Visualizations and Tabular Outputs
 -----------------------------------------------
 
@@ -630,7 +680,11 @@ across samples, percent masked bases ("N"s), and SNP locations across the panel.
 amplicons. User-defined frequency and depth thresholds separate true iSNVs from noise.
 When a GenBank reference is provided, coding-region SNPs are annotated with the
 resulting amino acid change, enabling immediate identification of resistance-conferring
-mutations.
+mutations. When ``--codon_correction`` finds a same-codon SNP pair with ``complete``
+linkage, the table reports a single combined row (e.g. ``T5118A|T5119A``) with one
+amino acid annotation for the joint codon change instead of two separate
+single-position rows; ``partial`` pairs show both the individual rows and the
+combined row.
 
 **Consensus FASTA Export** — consensus sequences for each sample and amplicon, exported
 at a user-defined breadth-of-coverage threshold. Suitable for downstream phylogenetic
