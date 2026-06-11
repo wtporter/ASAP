@@ -284,7 +284,7 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
             # We've covered it, now remove it from the dict so we can see what we might have missed
             del snp_dict[position]
         elif depth_passed and snp_call and snp_count >= mutdepth and snp_call_proportion >= proportion:
-            snp = {'name':'unknown', 'position':str(translated), 'depth':str(column_depth), 'reference':reference_call, 'variant':snp_call, 'basecalls':base_counter}
+            snp = {'name':f"{reference_call}{translated}{snp_call}", 'position':str(translated), 'depth':str(column_depth), 'reference':reference_call, 'variant':snp_call, 'basecalls':base_counter}
             if 0 in snp_dict:
                 (name, *rest, significance) = snp_dict[0][0]
                 snp['name'] = name

@@ -103,7 +103,7 @@ def test_generateSMORbam_correction_accounts_for_every_read(tmp_path, monkeypatc
 
     Test input: a 7-read BAM, name-sorted as AAA (overlapping pair), BBB
     (singleton), CCC (overlapping pair), DDD (non-overlapping pair);
-    generateSMORbam_correction._write_bam(samdata, out_file, "N").
+    generateSMORbam_correction._write_bam(samdata, out_file, "N", 10).
 
     Expected result: smor_stats.tsv shows input_reads==7, consensus_reads==2
     (AAA, CCC), singleton_reads==1 (BBB), pairs_dropped==2 (DDD), and
@@ -115,7 +115,7 @@ def test_generateSMORbam_correction_accounts_for_every_read(tmp_path, monkeypatc
 
     out_file = str(tmp_path / "out_SMOR.bam")
     with pysam.AlignmentFile(bam_path, "rb") as samdata:
-        generateSMORbam_correction._write_bam(samdata, out_file, "N")
+        generateSMORbam_correction._write_bam(samdata, out_file, "N", 10)
 
     stats = _read_stats(tmp_path / "smor_stats.tsv")
     _assert_reconciles(stats, total_reads)
