@@ -8,12 +8,17 @@ read-level linkage logic without requiring real sequencing data.
 import os
 import sys
 from collections import Counter
+from xml.etree import ElementTree
 
 import pytest
 import pysam
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from asap.newBamProcessor import _apply_discover_roi, _build_fragment_allele_table
+from asap.newBamProcessor import (
+    _apply_discover_roi,
+    _build_fragment_allele_table,
+    _add_linked_snps_node,
+)
 
 REF_LEN = 1000
 REF_NAME = "test_ref"
@@ -228,3 +233,131 @@ def test_min_snp_perc_boundary_is_inclusive(tmp_bam):
     # boundary's frequency is exactly 1/20 == 0.05 == min_snp_perc -> included
     assert 'linked_snps' in boundary
     assert 'anchor2' in _linked_names(boundary)
+
+
+# ---------------------------------------------------------------------------
+# Case 4: comparable_count, spanning_depth, percentage_linked and
+# linked_pct (XML "snp_percentage_linked") are distinct quantities with
+# different denominators
+# ---------------------------------------------------------------------------
+def test_comparable_count_and_spanning_depth_distinct(tmp_bam):
+    """Purpose: verify that for a partially-linked SNP pair,
+    spanning_depth, comparable_count, percentage_linked and linked_pct take
+    on distinct values, each with its own denominator.
+
+    Function under test: _apply_discover_roi -- the linked_snps entry
+    construction, specifically:
+        comparable_count = linked_count + standalone_count
+        percentage_linked = linked_count / comparable_count * 100
+        linked_pct        = linked_count / count_a * 100
+    while spanning_depth counts ALL fragments confidently called at both
+    positions regardless of the allele at amp_a (so it includes reference
+    reads that don't carry s_a's variant at all).
+
+    Test input: amp positions 100 (s_a, A->T) and 110 (s_b, A->C); 41bp
+    reads starting at ref 95 unless noted:
+        - 6 reads: T@100, C@110              (linked)
+        - 3 reads: T@100, A@110              (standalone: confident, unlinked)
+        - 1 read (10bp): T@100, too short to reach 110 (non-overlapping)
+        - 5 reads: A@100, A@110              (reference: spans both
+          positions but doesn't carry s_a's variant)
+    snp_list = [s_a (depth=15, T count=10), s_b (depth=14, C count=6)];
+    _apply_discover_roi called with min_perc=0.0, min_reads=1,
+    min_snp_perc=0.0.
+
+    Expected result: in s_a's linked_snps entry for s_b: linked_count == 6,
+    standalone_count == 3, nonoverlap_count == 1, comparable_count == 9,
+    spanning_depth == 14, percentage_linked == 66.7, linked_pct == 60.0.
+    """
+    reads = []
+    # 6 reads: T@100, C@110 (linked)
+    for i in range(6):
+        seq = list("A" * 41)
+        seq[5] = "T"
+        seq[15] = "C"
+        reads.append(_make_read(f"linked{i}", "".join(seq), 95))
+
+    # 3 reads: T@100, A@110 (standalone)
+    for i in range(3):
+        seq = list("A" * 41)
+        seq[5] = "T"
+        reads.append(_make_read(f"standalone{i}", "".join(seq), 95))
+
+    # 1 read: T@100, too short to reach 110 (non-overlapping)
+    seq = list("A" * 10)
+    seq[5] = "T"
+    reads.append(_make_read("short0", "".join(seq), 95))
+
+    # 5 reads: A@100, A@110 (reference -- spans both, not s_a's variant)
+    for i in range(5):
+        reads.append(_make_read(f"ref{i}", "A" * 41, 95))
+
+    samdata = tmp_bam(reads)
+    pos_table, reach, masked = _build_fragment_allele_table(samdata, [100, 110], REF_NAME)
+    samdata.close()
+
+    s_a = {'name': 's_a', 'position': '101', 'reference': 'A', 'variant': 'T',
+           'depth': '15', 'basecalls': Counter({'T': 10, 'A': 5})}
+    s_b = {'name': 's_b', 'position': '111', 'reference': 'A', 'variant': 'C',
+           'depth': '14', 'basecalls': Counter({'C': 6, 'A': 8})}
+    snp_list = [s_a, s_b]
+
+    _apply_discover_roi(snp_list, pos_table, reach, masked, offset=0,
+                         min_perc=0.0, min_reads=1, min_snp_perc=0.0)
+
+    entry = next(e for e in s_a['linked_snps'] if e['name'] == 's_b')
+    assert entry['linked_count'] == 6
+    assert entry['standalone_count'] == 3
+    assert entry['nonoverlap_count'] == 1
+    assert entry['comparable_count'] == 9
+    assert entry['spanning_depth'] == 14
+    assert entry['percentage_linked'] == 66.7
+    assert entry['linked_pct'] == 60.0
+
+
+# ---------------------------------------------------------------------------
+# Case 5: _add_linked_snps_node maps entry fields to the expected XML
+# attributes, including comparable_depth and snp_percentage_linked
+# ---------------------------------------------------------------------------
+def test_add_linked_snps_node_xml_attributes():
+    """Purpose: verify _add_linked_snps_node serializes a linked_snps entry
+    dict to a <linked_snp> element with the expected attributes, including
+    the comparable_depth and snp_percentage_linked fields.
+
+    Function under test: _add_linked_snps_node -- pure XML serialization of
+    a single linked_snps entry as produced by _apply_discover_roi.
+
+    Test input: a synthetic entry dict with spanning_depth=14,
+    linked_count=6, comparable_count=9, percentage_linked=66.7,
+    linked_pct=60.0.
+
+    Expected result: the resulting <linked_snp> element has
+    spanning_depth="14", linked_depth="6", comparable_depth="9",
+    percentage_linked="66.7", and snp_percentage_linked="60.0".
+    """
+    snp_node = ElementTree.Element('snp')
+    entry = {
+        'name': 's_b',
+        'ref_pos_allele': 'A111',
+        'linked_pct': 60.0,
+        'linked_count': 6,
+        'standalone_pct': 30.0,
+        'standalone_count': 3,
+        'masked_pct': 0.0,
+        'masked_count': 0,
+        'nonoverlap_pct': 10.0,
+        'nonoverlap_count': 1,
+        'percentage_linked': 66.7,
+        'comparable_count': 9,
+        'spanning_depth': 14,
+        'snp_depth': 15,
+    }
+
+    _add_linked_snps_node(snp_node, [entry])
+
+    link_node = snp_node.find('linked_snps/linked_snp')
+    assert link_node.attrib['spanning_depth'] == '14'
+    assert link_node.attrib['linked_depth'] == '6'
+    assert link_node.attrib['comparable_depth'] == '9'
+    assert link_node.attrib['percentage_linked'] == '66.7'
+    assert link_node.attrib['snp_percentage_linked'] == '60.0'

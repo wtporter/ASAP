@@ -6,6 +6,11 @@ library(openxlsx)
 library(doParallel)
 library(foreach)
 
+# Resolve path to local function files relative to this script
+.script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
+.functions_dir <- file.path(dirname(.script_path), "asap_tools_functions")
+source(file.path(.functions_dir, "_expand_codon_merges.R"))
+
 # --- Argument Parsing ---
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -112,6 +117,10 @@ SNPS <- SNPS %>%
   mutate(SNP = paste0(snp_reference, snp_position, Call)) %>%
   filter(snp_reference != Call) %>%
   filter(!is.na(snp_proportion))
+
+# --- Expand codon-merged SNPs (must match process_asaptools_snps_amino_acids.R
+# so SNP values here line up with Amino_Acids/Gene_SNPS for the join below) ---
+SNPS <- expand_codon_merges(SNPS)
 
 # --- Load Optional AA Data ---
 if (SNP_RDATA == "NULL" || !file.exists(SNP_RDATA) || is.null(SNP_RDATA)) {

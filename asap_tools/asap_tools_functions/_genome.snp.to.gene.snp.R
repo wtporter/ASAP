@@ -21,61 +21,71 @@ genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = parallelly::availabl
   Reference_DF <- Reference_DF %>%
     mutate(gene = ifelse(is.na(gene), locus_tag, gene))
 
-  SNP_List <- snp_db %>%
-    separate(SNP, into = c("reference", "snp_position"), sep = "(?<=\\D)(?=\\d)", remove = F) %>%
-    separate(snp_position, into = c("snp_position", "snp_mutation"), sep = "(?<=\\d)(?=\\D)", remove = F)
+  SNP_List <- snp_db
 
-  SNP_List$snp_position <- as.numeric(SNP_List$snp_position)
+  # SNP strings are 1 or 2 "<ref><pos><mut>" tokens, pipe-joined for
+  # codon-merge combo rows (e.g. "T5118A|T5119A"); parse each token
+  # separately with the existing reference/position/mutation regex, in
+  # token order (ascending genome position, per expand_codon_merges()).
+  SNP_Tokens <- SNP_List %>%
+    mutate(.snp_row = row_number()) %>%
+    select(.snp_row, SNP) %>%
+    mutate(token = str_split(SNP, "\\|")) %>%
+    unnest(token) %>%
+    separate(token, into = c("reference", "snp_position"), sep = "(?<=\\D)(?=\\d)", remove = FALSE) %>%
+    separate(snp_position, into = c("snp_position", "snp_mutation"), sep = "(?<=\\d)(?=\\D)") %>%
+    mutate(snp_position = as.numeric(snp_position)) %>%
+    select(-token)
+
+  Tokens_By_Row <- split(SNP_Tokens, SNP_Tokens$.snp_row)
 
   cl <- makeCluster(cores)
   registerDoParallel(cl)
 
   Temp <- foreach(SNP = 1:nrow(SNP_List), .combine = rbind) %dopar% {
     library(dplyr)
+    library(Biostrings)
 
-    REFERENCE  <- SNP_List$reference[SNP]
-    POSITION   <- SNP_List$snp_position[SNP]
-    MUTATION   <- SNP_List$snp_mutation[SNP]
-    GENOME_SNP <- paste0(REFERENCE, POSITION, MUTATION)
+    GENOME_SNP <- SNP_List$SNP[SNP]
+    Components <- Tokens_By_Row[[as.character(SNP)]]
+
+    POSITION_vec <- Components$snp_position
+    MUTATION_vec <- Components$snp_mutation
+    n_comp <- length(POSITION_vec)
 
     Out <- data.frame()
 
     for (GENE in 1:nrow(Reference_DF)) {
-      if (POSITION >= Reference_DF$start[GENE] & POSITION <= Reference_DF$end[GENE]) {
+      if (all(POSITION_vec >= Reference_DF$start[GENE] & POSITION_vec <= Reference_DF$end[GENE])) {
 
-        SNP_in_gene   <- (POSITION - Reference_DF$start[GENE]) + 1
-        Reference_Seq <- Biostrings::DNAString(Reference_DF$sequence[GENE])
+        Reference_Seq   <- Biostrings::DNAString(Reference_DF$sequence[GENE])
+        SNP_in_gene_vec <- (POSITION_vec - Reference_DF$start[GENE]) + 1
 
-        if (MUTATION != "_") {
-          Observed_Seq <- Biostrings::DNAString(MUTATION)
-        } else {
-          Observed_Seq <- "_"
+        Theoretical_Ref_vec <- character(n_comp)
+        for (i in seq_len(n_comp)) {
+          Theoretical_Ref_vec[i] <- as.character(Reference_Seq[SNP_in_gene_vec[i]])
         }
 
-        Theoretical_Ref <- Reference_Seq[SNP_in_gene]
+        MUTATION_out_vec <- MUTATION_vec
 
         if (Reference_DF$strand[GENE] == "-") {
-          SNP_in_gene     <- (Reference_DF$end[GENE] - POSITION) + 1
-          Reference_Seq   <- Biostrings::reverseComplement(Reference_Seq)
-          Theoretical_Ref <- Biostrings::reverseComplement(Theoretical_Ref)
-
-          if (MUTATION != "_") {
-            Observed_Seq <- Biostrings::reverseComplement(Observed_Seq)
-          } else {
-            Observed_Seq <- "_"
+          for (i in seq_len(n_comp)) {
+            Theoretical_Ref_vec[i] <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(Theoretical_Ref_vec[i])))
+            MUTATION_out_vec[i]    <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(MUTATION_vec[i])))
           }
-
-          MUTATION <- Observed_Seq
+          SNP_in_gene_vec <- (Reference_DF$end[GENE] - POSITION_vec) + 1
         }
 
+        SNP_Gene_vec <- paste0(Theoretical_Ref_vec, SNP_in_gene_vec, MUTATION_out_vec)
+
         Out <- rbind(Out, data.frame(
-          SNP                 = GENOME_SNP,
-          snp_position_genome = POSITION,
-          snp_position_gene   = SNP_in_gene,
-          snp_mutation        = MUTATION,
-          Theoretical_Reference = Theoretical_Ref,
-          Gene                = Reference_DF$gene[GENE],
-          SNP_Gene            = paste0(Theoretical_Ref, SNP_in_gene, MUTATION)
+          SNP                   = GENOME_SNP,
+          snp_position_genome   = paste(POSITION_vec, collapse = "|"),
+          snp_position_gene     = paste(SNP_in_gene_vec, collapse = "|"),
+          snp_mutation          = paste(MUTATION_out_vec, collapse = "|"),
+          Theoretical_Reference = paste(Theoretical_Ref_vec, collapse = "|"),
+          Gene                  = Reference_DF$gene[GENE],
+          SNP_Gene              = paste(SNP_Gene_vec, collapse = "|")
         ))
       }
     }

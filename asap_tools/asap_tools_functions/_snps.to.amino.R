@@ -22,43 +22,71 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
                                        Reference_DF[i, 2], Reference_DF[i, 3])
   }
 
-  Amino_Acid_List <- snp_db %>%
-    separate(SNP, into = c("reference", "snp_position"), sep = "(?<=\\D)(?=\\d)", remove = F) %>%
-    separate(snp_position, into = c("snp_position", "snp_mutation"), sep = "(?<=\\d)(?=\\D)", remove = F)
+  # SNP strings are 1 or 2 "<ref><pos><mut>" tokens, pipe-joined for
+  # codon-merge combo rows (e.g. "T5118A|T5119A"); parse each token
+  # separately with the existing reference/position/mutation regex, in
+  # token order (ascending genome position, per expand_codon_merges()).
+  SNP_Tokens <- snp_db %>%
+    mutate(.snp_row = row_number()) %>%
+    select(.snp_row, SNP) %>%
+    mutate(token = str_split(SNP, "\\|")) %>%
+    unnest(token) %>%
+    separate(token, into = c("reference", "snp_position"), sep = "(?<=\\D)(?=\\d)", remove = FALSE) %>%
+    separate(snp_position, into = c("snp_position", "snp_mutation"), sep = "(?<=\\d)(?=\\D)") %>%
+    mutate(snp_position = as.numeric(snp_position)) %>%
+    select(-token)
 
-  Amino_Acid_List$snp_position <- as.numeric(Amino_Acid_List$snp_position)
+  Tokens_By_Row <- split(SNP_Tokens, SNP_Tokens$.snp_row)
+
+  Amino_Acid_List <- snp_db %>%
+    mutate(.snp_row = row_number()) %>%
+    left_join(
+      SNP_Tokens %>%
+        group_by(.snp_row) %>%
+        summarise(snp_mutation = paste(snp_mutation, collapse = "|"), .groups = "drop"),
+      by = ".snp_row"
+    ) %>%
+    select(-.snp_row)
 
   cl <- makeCluster(cores)
   registerDoParallel(cl)
 
   Temp <- foreach(SNP = 1:nrow(Amino_Acid_List), .combine = rbind) %dopar% {
     library(dplyr)
+    library(Biostrings)
 
-    REFERENCE  <- Amino_Acid_List$reference[SNP]
-    POSITION   <- Amino_Acid_List$snp_position[SNP]
-    MUTATION   <- Amino_Acid_List$snp_mutation[SNP]
-    GENOME_SNP <- paste0(REFERENCE, POSITION, MUTATION)
+    GENOME_SNP   <- Amino_Acid_List$SNP[SNP]
+    Components   <- Tokens_By_Row[[as.character(SNP)]]
+    POSITION_vec <- Components$snp_position
+    MUTATION_vec <- Components$snp_mutation
+    n_comp       <- length(POSITION_vec)
 
     Out <- data.frame()
 
-    if (MUTATION != "_" & nchar(MUTATION) == 1) {
+    if (all(MUTATION_vec != "_" & nchar(MUTATION_vec) == 1)) {
       for (GENE in 1:nrow(Reference_DF)) {
-        if (POSITION >= Reference_DF$start[GENE] & POSITION <= Reference_DF$end[GENE]) {
+        if (all(POSITION_vec >= Reference_DF$start[GENE] & POSITION_vec <= Reference_DF$end[GENE])) {
 
-          SNP_in_gene   <- (POSITION - Reference_DF$start[GENE]) + 1
-          Reference_Seq <- Biostrings::DNAString(Reference_DF$sequence[GENE])
-          Observed_Seq  <- Biostrings::DNAString(Reference_DF$sequence[GENE])
-          Theoretical_Ref <- Reference_Seq[SNP_in_gene]
+          SNP_in_gene_vec <- (POSITION_vec - Reference_DF$start[GENE]) + 1
+          Reference_Seq   <- Biostrings::DNAString(Reference_DF$sequence[GENE])
+          Observed_Seq    <- Biostrings::DNAString(Reference_DF$sequence[GENE])
 
-          Observed_Seq[SNP_in_gene] <- MUTATION
-          Observed_SNP <- Observed_Seq[SNP_in_gene]
+          Theoretical_Ref_vec <- character(n_comp)
+          for (i in seq_len(n_comp)) {
+            Theoretical_Ref_vec[i] <- as.character(Reference_Seq[SNP_in_gene_vec[i]])
+            Observed_Seq[SNP_in_gene_vec[i]] <- MUTATION_vec[i]
+          }
+
+          MUTATION_out_vec <- MUTATION_vec
 
           if (Reference_DF$strand[GENE] == "-") {
-            Reference_Seq   <- Biostrings::reverseComplement(Reference_Seq)
-            Observed_Seq    <- Biostrings::reverseComplement(Observed_Seq)
-            Theoretical_Ref <- Biostrings::reverseComplement(Theoretical_Ref)
-            MUTATION        <- Biostrings::reverseComplement(Observed_SNP)
-            SNP_in_gene     <- (Reference_DF$end[GENE] - POSITION) + 1
+            Reference_Seq <- Biostrings::reverseComplement(Reference_Seq)
+            Observed_Seq  <- Biostrings::reverseComplement(Observed_Seq)
+            for (i in seq_len(n_comp)) {
+              Theoretical_Ref_vec[i] <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(Theoretical_Ref_vec[i])))
+              MUTATION_out_vec[i]    <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(MUTATION_vec[i])))
+            }
+            SNP_in_gene_vec <- (Reference_DF$end[GENE] - POSITION_vec) + 1
           }
 
           AA_Seq      <- Biostrings::translate(Reference_Seq, if.fuzzy.codon = "solve")
@@ -69,12 +97,13 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
             mutate(AA_Change = paste(Reference_DF$gene[GENE], ":", PatternSubstring,
                                      PatternStart, SubjectSubstring, sep = ""))
 
+          SNP_Gene_vec <- paste0(Theoretical_Ref_vec, SNP_in_gene_vec, MUTATION_out_vec)
+
           Out <- rbind(Out, data.frame(
             SNP                   = as.character(GENOME_SNP),
-            snp_position_genome   = POSITION,
-            snp_position_gene     = SNP_in_gene,
-            snp_mutation          = as.character(MUTATION),
-            Theoretical_Reference = as.character(Theoretical_Ref),
+            snp_position_genome   = paste(POSITION_vec, collapse = "|"),
+            snp_position_gene     = paste(SNP_in_gene_vec, collapse = "|"),
+            Theoretical_Reference = paste(Theoretical_Ref_vec, collapse = "|"),
             Gene                  = as.character(Reference_DF$gene[GENE]),
             Product               = as.character(Reference_DF$product[GENE]),
             AA                    = as.character(ifelse(
@@ -82,7 +111,7 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
               as.character(unique(Mutations$AA_Change)),
               "Synonymous"
             )),
-            SNP_Gene = as.character(paste0(Theoretical_Ref, SNP_in_gene, MUTATION))
+            SNP_Gene = paste(SNP_Gene_vec, collapse = "|")
           ))
         }
       }
@@ -92,16 +121,20 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
 
   stopCluster(cl)
 
-  Out <- full_join(Amino_Acid_List, select(Temp, -snp_mutation))
+  Out <- full_join(Amino_Acid_List, Temp)
 
   Out$snp_mutation <- as.character(unlist(Out$snp_mutation))
-  Out$AA[is.na(Out$AA) & nchar(as.character(Out$snp_mutation)) > 1] <- "Insertions Not Supported"
-  Out$AA[is.na(Out$AA) & Out$snp_mutation == "_"]                   <- "Deletions Not Supported"
-  Out$AA[is.na(Out$AA)]                                             <- "Non-coding SNP"
+  mut_components <- str_split(Out$snp_mutation, "\\|")
+  has_insertion  <- sapply(mut_components, function(m) any(nchar(m) > 1))
+  has_deletion   <- sapply(mut_components, function(m) any(m == "_"))
 
-  Out$SNP_Gene[is.na(Out$SNP_Gene) & nchar(as.character(Out$snp_mutation)) > 1] <- "Insertions Not Supported"
-  Out$SNP_Gene[is.na(Out$SNP_Gene) & Out$snp_mutation == "_"]                   <- "Deletions Not Supported"
-  Out$SNP_Gene[is.na(Out$SNP_Gene)]                                              <- "Non-coding SNP"
+  Out$AA[is.na(Out$AA) & has_insertion] <- "Insertions Not Supported"
+  Out$AA[is.na(Out$AA) & has_deletion]  <- "Deletions Not Supported"
+  Out$AA[is.na(Out$AA)]                 <- "Non-coding SNP"
+
+  Out$SNP_Gene[is.na(Out$SNP_Gene) & has_insertion] <- "Insertions Not Supported"
+  Out$SNP_Gene[is.na(Out$SNP_Gene) & has_deletion]  <- "Deletions Not Supported"
+  Out$SNP_Gene[is.na(Out$SNP_Gene)]                  <- "Non-coding SNP"
 
   select(Out, SNP, SNP_Gene, AA, Gene, Product, Theoretical_Reference)
 }
