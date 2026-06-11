@@ -64,6 +64,23 @@ def _read_output(out_fp):
 
 
 def test_filter_pairs_drops_both_mates_when_one_fails(tmp_path, monkeypatch):
+    """Purpose: verify that with filter_pairs=True, if either mate of a read
+    pair fails the percent-identity check, BOTH mates are marked unmapped in
+    the output (pair-aware filtering).
+
+    Function under test: identityFilter._identity_filter -- the two-pass
+    filter_pairs=True logic: pass 1 collects query_names of reads on checked
+    references that fail _passes_identity; pass 2 marks any read (or its
+    mate) in that set as unmapped.
+
+    Test input: one read pair "PAIR1" on "checked_ref": mate1 (read1) has
+    FAIL_MD/FAIL_NM (18/20=0.9 identity, fails PERCID=0.97); mate2 (read2)
+    has PASS_MD/PASS_NM (20/20=1.0, passes). _identity_filter called with
+    ref_names=None, percid=0.97, filter_pairs=True.
+
+    Expected result: discarded_reads == 2; both R1 and R2 in the output BAM
+    have is_unmapped == True.
+    """
     monkeypatch.chdir(tmp_path)
     reads = [
         _make_read("PAIR1", 0, True, FAIL_MD, FAIL_NM),
@@ -81,6 +98,23 @@ def test_filter_pairs_drops_both_mates_when_one_fails(tmp_path, monkeypatch):
 
 
 def test_filter_pairs_false_drops_only_failing_mate(tmp_path, monkeypatch):
+    """Purpose: verify that with filter_pairs=False, only the individual
+    mate that fails the identity check is marked unmapped, while its passing
+    mate is left untouched (no pair-aware propagation).
+
+    Function under test: identityFilter._identity_filter -- the single-pass
+    filter_pairs=False logic, where each read is evaluated independently via
+    _passes_identity and only failing reads are marked unmapped, regardless
+    of mate status.
+
+    Test input: same "PAIR1" setup as
+    test_filter_pairs_drops_both_mates_when_one_fails (mate1 fails identity,
+    mate2 passes); _identity_filter called with ref_names=None, percid=0.97,
+    filter_pairs=False.
+
+    Expected result: discarded_reads == 1; R1.is_unmapped == True and
+    R2.is_unmapped == False.
+    """
     monkeypatch.chdir(tmp_path)
     reads = [
         _make_read("PAIR1", 0, True, FAIL_MD, FAIL_NM),
@@ -99,6 +133,23 @@ def test_filter_pairs_false_drops_only_failing_mate(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("filter_pairs", [True, False])
 def test_both_mates_pass_are_kept(tmp_path, monkeypatch, filter_pairs):
+    """Purpose: verify that when both mates of a pair pass the
+    percent-identity check, neither is marked unmapped, regardless of the
+    filter_pairs setting.
+
+    Function under test: identityFilter._identity_filter /
+    _passes_identity -- _passes_identity returns True for both mates
+    (PASS_MD/PASS_NM = 20/20 = 1.0 identity >= PERCID), so neither the
+    pair-aware (filter_pairs=True) nor the independent (filter_pairs=False)
+    code path adds them to the failing set.
+
+    Test input: "PAIR1" with both mates using PASS_MD/PASS_NM (1.0
+    identity); _identity_filter called with ref_names=None, percid=0.97, and
+    filter_pairs parametrized over [True, False].
+
+    Expected result: discarded_reads == 0 for both parametrizations;
+    R1.is_unmapped == False and R2.is_unmapped == False.
+    """
     monkeypatch.chdir(tmp_path)
     reads = [
         _make_read("PAIR1", 0, True, PASS_MD, PASS_NM),
@@ -116,6 +167,25 @@ def test_both_mates_pass_are_kept(tmp_path, monkeypatch, filter_pairs):
 
 
 def test_filter_pairs_scoped_to_checked_references(tmp_path, monkeypatch):
+    """Purpose: verify that percent-identity filtering (and pair-aware
+    dropping) is scoped only to the references listed in ref_names -- reads
+    aligned to other (unchecked) references pass through untouched even if
+    their mate fails on a checked reference.
+
+    Function under test: identityFilter._identity_filter -- reference-scoping
+    logic: when ref_names is provided, only reads whose reference_name is in
+    ref_names are evaluated by _passes_identity / contribute to the failing
+    query_name set; reads on other references are written through unmodified
+    even under filter_pairs=True.
+
+    Test input: "PAIR1" with mate1 on "checked_ref" (FAIL_MD/FAIL_NM, fails)
+    and mate2 on "other_ref" (PASS_MD/PASS_NM, passes); _identity_filter
+    called with ref_names=["checked_ref"], percid=0.97, filter_pairs=True.
+
+    Expected result: discarded_reads == 1; R1.is_unmapped == True;
+    R2.is_unmapped == False and R2.reference_name == "other_ref" (untouched
+    despite filter_pairs=True, because "other_ref" isn't checked).
+    """
     monkeypatch.chdir(tmp_path)
     reads = [
         _make_read("PAIR1", 0, True, FAIL_MD, FAIL_NM, ref_id=0),   # checked_ref, fails

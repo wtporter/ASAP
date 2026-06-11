@@ -91,6 +91,25 @@ def _assert_reconciles(stats, total_reads):
 
 
 def test_generateSMORbam_correction_accounts_for_every_read(tmp_path, monkeypatch):
+    """Purpose: verify that itertools.groupby-based pair grouping accounts
+    for every input read, including a singleton positioned between two valid
+    pairs in name-sorted order (regression test for a grouping desync bug).
+
+    Function under test: generateSMORbam_correction._write_bam -- groups
+    name-sorted reads by query_name; classifies each group as a singleton
+    (counted, skipped), a non-overlapping pair (both reads -> pairs_dropped),
+    or an overlapping pair (merged via _get_consensus into one consensus
+    read); writes per-reference stats to smor_stats.tsv.
+
+    Test input: a 7-read BAM, name-sorted as AAA (overlapping pair), BBB
+    (singleton), CCC (overlapping pair), DDD (non-overlapping pair);
+    generateSMORbam_correction._write_bam(samdata, out_file, "N").
+
+    Expected result: smor_stats.tsv shows input_reads==7, consensus_reads==2
+    (AAA, CCC), singleton_reads==1 (BBB), pairs_dropped==2 (DDD), and
+    2*consensus_reads + pairs_dropped + singleton_reads == input_reads (all 7
+    reads accounted for).
+    """
     bam_path, total_reads = _build_bam(tmp_path)
     monkeypatch.chdir(tmp_path)
 
@@ -103,6 +122,27 @@ def test_generateSMORbam_correction_accounts_for_every_read(tmp_path, monkeypatc
 
 
 def test_generateSMORbam_accounts_for_every_read(tmp_path, monkeypatch):
+    """Purpose: verify the same read-accounting guarantee as
+    test_generateSMORbam_correction_accounts_for_every_read, but for the
+    non-quality-corrected generateSMORbam._write_bam implementation, ensuring
+    its grouping logic doesn't desync around a mid-sequence singleton either.
+
+    Function under test: generateSMORbam._write_bam -- same
+    itertools.groupby grouping/classification logic as
+    generateSMORbam_correction._write_bam, but consensus merging via
+    generateSMORbam._get_consensus (overlap-region merge without
+    quality-based correction).
+
+    Test input: the same 7-read BAM as
+    test_generateSMORbam_correction_accounts_for_every_read (AAA pair, BBB
+    singleton, CCC pair, DDD non-overlapping pair);
+    generateSMORbam._write_bam(samdata, out_file, "N", 0, False).
+
+    Expected result: same reconciliation as the correction test:
+    input_reads==7, consensus_reads==2, singleton_reads==1,
+    pairs_dropped==2, and 2*consensus_reads + pairs_dropped +
+    singleton_reads == input_reads.
+    """
     bam_path, total_reads = _build_bam(tmp_path)
     monkeypatch.chdir(tmp_path)
 

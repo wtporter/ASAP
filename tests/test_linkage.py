@@ -58,7 +58,22 @@ def tmp_bam(tmp_path):
 # Case 1: two SNP positions on the same read — perfectly linked
 # ---------------------------------------------------------------------------
 def test_linked_on_same_read(tmp_bam):
-    """Both variant positions (100, 110) are on every read → always linked."""
+    """Purpose: verify that two SNP positions found on the same read are
+    reported as perfectly linked.
+
+    Function under test: _build_fragment_allele_table /
+    _tally_allele_linkage -- per-fragment base-call extraction followed by a
+    tally of (pos, base) combinations across fragments present at all
+    requested positions.
+
+    Test input: 20 synthetic 25-bp reads, each starting at ref position 95,
+    with a fixed 'T' at offset 5 (genome pos 100) and 'C' at offset 15
+    (genome pos 110); _build_fragment_allele_table/_tally_allele_linkage
+    called for positions=[100, 110].
+
+    Expected result: result has exactly 1 combo,
+    frozenset({(100, 'T'), (110, 'C')}), with count == 20.
+    """
     reads = []
     for i in range(20):
         # 25-base read starting at 95, covers pos 100 (offset 5) and 110 (offset 15)
@@ -80,7 +95,21 @@ def test_linked_on_same_read(tmp_bam):
 # Case 2: two positions on different mates of a read pair — should be linked
 # ---------------------------------------------------------------------------
 def test_linked_across_mates(tmp_bam):
-    """Position 50 is on read1, position 200 is on read2; same fragment → linked."""
+    """Purpose: verify that SNP positions located on different mates of the
+    same read pair (fragment) are still linked together.
+
+    Function under test: _build_fragment_allele_table -- fragment-level
+    merge step, where read1 and read2 share a query_name so base calls from
+    both mates are combined into one fragment entry before
+    _tally_allele_linkage tallies combos.
+
+    Test input: 15 read pairs; read1 (flag 0x43) covers ref 40-89 with 'T' at
+    offset 10 (pos 50); read2 (flag 0x83) covers ref 190-239 with 'G' at
+    offset 10 (pos 200); positions=[50, 200].
+
+    Expected result: result has exactly 1 combo,
+    frozenset({(50, 'T'), (200, 'G')}), with count == 15.
+    """
     reads = []
     for i in range(15):
         # read1: covers 40–90 (pos 50 at offset 10) → A variant
@@ -104,7 +133,22 @@ def test_linked_across_mates(tmp_bam):
 # Case 3: unlinked SNPs — two independent allele combinations expected
 # ---------------------------------------------------------------------------
 def test_unlinked_snps(tmp_bam):
-    """Half the reads have A@100+C@110, other half have T@100+G@110; two combos."""
+    """Purpose: verify that two distinct allele combinations present in the
+    population are tallied as two separate linkage groups with correct
+    counts.
+
+    Function under test: _tally_allele_linkage -- the returned Counter
+    accumulates one entry per distinct (pos, base) frozenset observed across
+    fragments.
+
+    Test input: 20 reads at ref 95-119 covering positions 100 & 110: 10
+    "ref"-named reads carry A@100/C@110, 10 "alt"-named reads carry
+    T@100/G@110; positions=[100, 110].
+
+    Expected result: result has exactly 2 entries, each with count == 10:
+    frozenset({(100, 'A'), (110, 'C')}) and
+    frozenset({(100, 'T'), (110, 'G')}).
+    """
     reads = []
     for i in range(10):
         seq = "A" * 5 + "A" + "A" * 9 + "C" + "A" * 5   # A@100, C@110 (reference-like)
@@ -128,7 +172,20 @@ def test_unlinked_snps(tmp_bam):
 # Case 4: reads that do not span all positions are excluded
 # ---------------------------------------------------------------------------
 def test_reads_not_spanning_all_excluded(tmp_bam):
-    """Reads covering only pos 100 (not 300) must not contribute to the tally."""
+    """Purpose: verify that fragments which don't cover every requested
+    position contribute nothing to the linkage tally.
+
+    Function under test: _tally_allele_linkage -- only considers fragments
+    present in the position table for ALL requested positions (driven by the
+    smallest position table); fragments missing from any requested position
+    are skipped entirely.
+
+    Test input: 10 reads, 20-bp starting at ref 95 (covers genome positions
+    95-114, reaching pos 100 but not pos 300); positions=[100, 300].
+
+    Expected result: result is empty (len(result) == 0), since no fragment
+    spans both pos 100 and pos 300.
+    """
     reads = []
     for i in range(10):
         # 20-base read: covers 95–115, reaches pos 100 but NOT pos 300
@@ -147,7 +204,21 @@ def test_reads_not_spanning_all_excluded(tmp_bam):
 # Case 5: supplementary / secondary reads are skipped
 # ---------------------------------------------------------------------------
 def test_supplementary_secondary_excluded(tmp_bam):
-    """Supplementary (flag 0x800) and secondary (flag 0x100) reads are ignored."""
+    """Purpose: verify that supplementary and secondary alignments are
+    ignored, so they don't pollute the per-position allele table or the
+    linkage tally.
+
+    Function under test: _build_fragment_allele_table -- read-filtering step
+    that skips reads with flag bits 0x800 (supplementary) or 0x100
+    (secondary) before recording base calls.
+
+    Test input: 5 reads flagged supplementary (0x800) and 5 flagged
+    secondary (0x100), all otherwise carrying T@100/C@110; positions=[100, 110].
+
+    Expected result: result is empty (len(result) == 0), since none of the
+    flagged reads contribute to pos_table and so no fragment spans both
+    positions.
+    """
     reads = []
     seq = "A" * 5 + "T" + "A" * 9 + "C" + "A" * 10
     for i in range(5):
@@ -166,7 +237,21 @@ def test_supplementary_secondary_excluded(tmp_bam):
 # Case 6: caller applies a min_reads threshold to the raw tally
 # ---------------------------------------------------------------------------
 def test_min_reads_threshold(tmp_bam):
-    """A combo seen only 3 times can be filtered out by a min_reads=10 threshold."""
+    """Purpose: verify that the raw tally returned by _tally_allele_linkage
+    can be downstream-filtered by a min_reads threshold to drop rare allele
+    combinations.
+
+    Function under test: _tally_allele_linkage -- performs no filtering
+    itself; it returns the raw Counter of (pos, base) combo -> fragment
+    count, leaving any min_reads filtering to the caller.
+
+    Test input: 23 reads at positions=[100, 110]: 3 "rare" reads carrying
+    T@100/C@110, 20 "common" reads carrying A@100/A@110 (reference-like).
+
+    Expected result: the raw result contains both combos (counts 3 and 20);
+    after filtering entries with count >= 10, only
+    frozenset({(100, 'A'), (110, 'A')}) -> 20 survives.
+    """
     reads = []
     seq_rare  = "A" * 5 + "T" + "A" * 9 + "C" + "A" * 10  # rare combo
     seq_common = "A" * 5 + "A" + "A" * 9 + "A" + "A" * 10  # common (ref)
@@ -190,11 +275,23 @@ def test_min_reads_threshold(tmp_bam):
 # Case 7: overlapping mates disagree on masking -- a real call wins
 # ---------------------------------------------------------------------------
 def test_masked_pos_table_disjoint_on_overlap(tmp_bam):
-    """
-    Mate1 covers position 100 with an 'N' (e.g. primer-masked); mate2 of the
-    same fragment also covers position 100, but with a real base call. The
-    fragment must end up in pos_table (real call wins) and NOT also in
-    masked, so callers can't double-count it.
+    """Purpose: verify that when overlapping mates of the same fragment
+    disagree on masking at a shared position, the real call wins and the
+    fragment is not double-counted as masked.
+
+    Function under test: _build_fragment_allele_table -- masking
+    reconciliation logic: if one mate reports 'N' (e.g. primer-masked) and
+    the other mate reports a real base for the same fragment/position, the
+    real call is recorded in pos_table and the fragment is excluded from
+    masked for that position.
+
+    Test input: a single fragment "pair0" with two overlapping mates: mate1
+    (read1, flag 0x43) covers ref 95-114 with 'N' at offset 5 (pos 100);
+    mate2 (read2, flag 0x83) covers ref 90-109 with 'T' at offset 10
+    (pos 100); _build_fragment_allele_table called for positions=[100].
+
+    Expected result: pos_table[100]["pair0"] == "T" (real call wins), and
+    "pair0" not in masked[100].
     """
     # mate1: 95-114, position 100 is offset 5 -> 'N' (masked)
     seq1 = "A" * 5 + "N" + "A" * 14

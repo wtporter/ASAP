@@ -66,9 +66,20 @@ def _write_gb(tmp_path, name, seq, features_block):
 # Case 1: simple forward-strand CDS — verify codon count and boundaries
 # ---------------------------------------------------------------------------
 def test_forward_cds_basic(tmp_path):
-    """
-    30-bp genome = 10 ATG codons.  Amplicon = genome[3:18] (positions 3-17,
-    0-based) = 5 codons worth.  Expect exactly 5 codon_boundaries all in [0,15).
+    """Purpose: verify in-frame forward-strand CDS overlap is detected and
+    codon boundaries are computed correctly.
+
+    Function under test: _parse_genbank_cds -- amplicon location, CDS-overlap
+    detection, and codon-boundary computation when the amplicon starts
+    exactly on a codon boundary (zero frame offset).
+
+    Test input: 30-bp genome = 10 "ATG" codons, with a single forward CDS
+    spanning 1..30 (gene="aaa"). Amplicon = genome[3:18] (positions 3-17,
+    0-based) = 5 codons worth.
+
+    Expected result: exactly 1 CdsFeature returned with name=="aaa",
+    strand=="+", and exactly 5 codon_boundaries, each a 3-bp span fully
+    within amplicon-local [0, 15).
     """
     seq = "ATG" * 10  # 30 bp
     features = textwrap.dedent("""\
@@ -98,9 +109,19 @@ def test_forward_cds_basic(tmp_path):
 # Case 2: amplicon starts mid-codon — reading frame boundary skip
 # ---------------------------------------------------------------------------
 def test_frame_skip_mid_codon(tmp_path):
-    """
-    Amplicon starts 1 nt into a codon.  The first complete codon in the
-    amplicon should start at amplicon position 2 (skipping 1 frame offset).
+    """Purpose: verify that when the amplicon starts mid-codon (not aligned
+    to the CDS reading frame), the leading partial codon is skipped.
+
+    Function under test: _parse_genbank_cds -- frame-offset calculation that
+    determines how many bases into a codon the amplicon start falls, and
+    skips that many bases before reporting the first codon_boundary.
+
+    Test input: same 30-bp "ATG"x10 genome with forward CDS 1..30
+    (gene="bbb"). Amplicon = genome[1:16], which starts 1 nt into codon 1
+    (frame_in_codon == 1).
+
+    Expected result: the first codon_boundary starts at amplicon-local
+    position 2 (a 2-nt skip accounts for the 1-nt frame offset).
     """
     seq = "ATG" * 10  # positions 0-29 (0-based)
     features = textwrap.dedent("""\
@@ -126,7 +147,18 @@ def test_frame_skip_mid_codon(tmp_path):
 # Case 3: no CDS overlap — returns empty list
 # ---------------------------------------------------------------------------
 def test_no_cds_overlap(tmp_path):
-    """Amplicon is from a region with no CDS features → empty list."""
+    """Purpose: verify that an amplicon located outside any annotated CDS
+    yields an empty result (not an error or a spurious match).
+
+    Function under test: _parse_genbank_cds -- overlap-detection step, which
+    excludes CDS features whose genomic range does not intersect the located
+    amplicon coordinates.
+
+    Test input: 80-bp non-repeating synthetic genome with one CDS at 1..30
+    (gene="ccc"). Amplicon = genome[40:70], entirely outside the CDS.
+
+    Expected result: results == [].
+    """
     # Non-repeating 80 bp sequence (each 10 bp block distinct) so the
     # amplicon at [40:70] is only found at its true location, not via an
     # earlier identical-content match overlapping the CDS at [0:30].
@@ -149,7 +181,18 @@ def test_no_cds_overlap(tmp_path):
 # Case 4: amplicon not found in genome → empty list with no exception
 # ---------------------------------------------------------------------------
 def test_amplicon_not_in_genome(tmp_path):
-    """When the amplicon sequence doesn't appear in the genome, return []."""
+    """Purpose: verify that an amplicon sequence which cannot be located
+    anywhere in the genome returns an empty result without raising.
+
+    Function under test: _parse_genbank_cds -- amplicon-location step (exact
+    match, falling back to local alignment for short sequences), which finds
+    no match and returns early.
+
+    Test input: 32-bp all-"A" genome with CDS 1..30 (gene="ddd"). Amplicon =
+    "CCCCCCCCCCCCCCCC" (16 C's), which does not occur anywhere in the genome.
+
+    Expected result: results == [].
+    """
     seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # 32 A's
     features = textwrap.dedent("""\
              CDS             1..30
@@ -169,9 +212,20 @@ def test_amplicon_not_in_genome(tmp_path):
 # Case 5: reverse-complement amplicon is located correctly
 # ---------------------------------------------------------------------------
 def test_reverse_complement_amplicon(tmp_path):
-    """
-    The amplicon is the RC of a genomic region that overlaps a CDS.
-    _parse_genbank_cds should still find the CDS and return codon boundaries.
+    """Purpose: verify that an amplicon supplied as the reverse complement of
+    a genomic region still resolves to the correct CDS and codon boundaries.
+
+    Function under test: _parse_genbank_cds -- reverse-complement detection
+    branch, which locates the RC match when the amplicon doesn't match the
+    forward strand directly, tracks strand orientation, and computes codon
+    boundaries the same way as the forward-strand case.
+
+    Test input: same 30-bp "ATG"x10 genome with forward CDS 1..30
+    (gene="eee"). Amplicon = reverse complement of genome[3:18] (the same
+    5-codon region as test_forward_cds_basic, but RC'd).
+
+    Expected result: exactly 1 CdsFeature returned with name=="eee" and
+    exactly 5 codon_boundaries.
     """
     from skbio import DNA
 
@@ -199,10 +253,22 @@ def test_reverse_complement_amplicon(tmp_path):
 # Case 6: multiple GenBank files — CDS found regardless of which file/order
 # ---------------------------------------------------------------------------
 def test_multi_file_genbank(tmp_path):
-    """
-    _parse_genbank_cds should accept a list of GenBank files and search all of
-    them for the amplicon, regardless of which file contains the match or the
-    order the files are given in.
+    """Purpose: verify _parse_genbank_cds accepts a list of GenBank files and
+    finds the matching CDS regardless of which file contains it or the order
+    the files are given in.
+
+    Function under test: _parse_genbank_cds -- multi-file iteration, which
+    searches each provided GenBank file (each loaded/cached via
+    _load_genbank_records) for the amplicon until a match is found.
+
+    Test input: two synthetic GenBank files -- "MULTI_OTHER" (32-bp all-A
+    genome, CDS gene="zzz", does not contain the amplicon) and "MULTI_HIT"
+    (30-bp "ATG"x10 genome, CDS gene="fff", amplicon = hit_seq[3:18]).
+    _parse_genbank_cds is called with both file orderings:
+    [other, hit] and [hit, other].
+
+    Expected result: both orderings return exactly 1 CdsFeature with
+    name=="fff" and 5 codon_boundaries.
     """
     # File with no overlapping CDS for the amplicon used below.
     other_seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # 32 A's
@@ -237,9 +303,19 @@ def test_multi_file_genbank(tmp_path):
 # Case 7: GenBank records are cached across calls
 # ---------------------------------------------------------------------------
 def test_genbank_records_cached(tmp_path):
-    """
-    Repeated _parse_genbank_cds calls for the same file should hit the
-    _load_genbank_records cache instead of re-reading/re-parsing it.
+    """Purpose: verify repeated _parse_genbank_cds calls for the same file
+    reuse the parsed-record cache instead of re-reading/re-parsing the file.
+
+    Function under test: _load_genbank_records -- decorated with
+    @functools.lru_cache, so the first call for a given path is a cache miss
+    (parses the file) and subsequent calls with the same path are cache hits.
+
+    Test input: a single synthetic GenBank file "CACHETEST" (30-bp "ATG"x10,
+    CDS gene="ggg"). The cache is cleared via cache_clear(), then
+    _parse_genbank_cds is called twice with the identical (gb, amplicon) args.
+
+    Expected result: after the first call, cache_info() shows misses==1,
+    hits==0; after the second call, misses==1 (unchanged), hits==1.
     """
     seq = "ATG" * 10
     features = textwrap.dedent("""\
@@ -272,10 +348,22 @@ def test_genbank_records_cached(tmp_path):
     reason="H37Rv GenBank test fixture not available"
 )
 def test_rpob_in_h37rv(tmp_path):
-    """
-    Use a known rpoB amplicon excerpt (from TB.json) and verify that
-    _parse_genbank_cds finds the rpoB CDS and returns codon boundaries
-    within the amplicon window.
+    """Purpose: end-to-end sanity check that _parse_genbank_cds works against
+    a real annotated genome and a real amplicon, finding the rpoB CDS and
+    valid codon boundaries (skipped if the H37Rv fixture is unavailable).
+
+    Function under test: _parse_genbank_cds -- the full pipeline (amplicon
+    location, CDS-overlap detection, codon-boundary computation) exercised
+    against real GenBank annotation data rather than synthetic minimal
+    records.
+
+    Test input: the real H37Rv GenBank file
+    (../nextflow/tests/preparejson/H37Rv_NC0009623.gb) and an 80-bp excerpt of
+    the rpoB amplicon sequence taken from TB.json.
+
+    Expected result: results has >= 1 CdsFeature; at least one feature name
+    contains "rpoB" or "Rv0667"; for that feature, every codon_boundary
+    (start, end) lies within [0, len(amplicon)) and end-start == 3.
     """
     # Short excerpt from TB.json rpoB amplicon (known to overlap rpoB CDS)
     rpob_excerpt = "CCGAGCGGGGTGATGTCAACCCAGTGGGTGGCCTGGAAGAGGTGCTCTACGAGCTGTCTCCGATCGAGGACTTCTCCGGG"

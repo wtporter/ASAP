@@ -107,8 +107,26 @@ def _make_snp_list():
 
 
 def test_low_freq_snp_excluded_by_default_min_snp_perc(tmp_bam):
-    """A 4% 'noise' SNP is dropped entirely (anchor and candidate) at the
-    default min_snp_perc=0.05, while the 88% anchor/linked pair still link."""
+    """Purpose: verify that with the default min_snp_perc=0.05 threshold, a
+    low-frequency (4%) "noise" SNP is excluded entirely from linkage
+    discovery -- both as a candidate that gets its own linked_snps list, and
+    as a linked candidate for other SNPs -- while a high-frequency (88%)
+    anchor/linked pair still link to each other.
+
+    Function under test: _apply_discover_roi -- the discover_roi_min_snp_perc
+    pre-filter, which excludes SNPs with basecalls[variant]/depth <
+    min_snp_perc from both sides of the pairwise linkage comparison.
+
+    Test input: a 25-fragment synthetic BAM at amplicon positions
+    100/110/120 (21 reads T@100/C@110/A@120, 1 "noise" read
+    T@100/C@110/G@120, 3 reference reads); snp_list = [anchor (22/25=88%),
+    linked (22/25=88%), noise (1/25=4%)]; _apply_discover_roi called with
+    min_perc=0.0, min_reads=1, min_snp_perc=0.05 (default).
+
+    Expected result: 'linked_snps' not in noise; 'noise' does not appear in
+    anchor's or linked's linked_snps; 'linked' appears in anchor's
+    linked_snps and 'anchor' appears in linked's linked_snps.
+    """
     pos_table, reach, masked = _make_anchor_linked_noise_bam(tmp_bam)
     snp_list = _make_snp_list()
     anchor, linked, noise = snp_list
@@ -124,8 +142,24 @@ def test_low_freq_snp_excluded_by_default_min_snp_perc(tmp_bam):
 
 
 def test_low_freq_snp_included_when_min_snp_perc_zero(tmp_bam):
-    """With min_snp_perc=0.0 the same 'noise' SNP participates: it gets its
-    own linked_snps entry and shows up as a candidate for 'anchor'."""
+    """Purpose: verify that lowering min_snp_perc to 0.0 allows the same 4%
+    "noise" SNP to fully participate in linkage discovery -- it gets its own
+    linked_snps entry and is reported as a candidate linked to 'anchor'.
+
+    Function under test: _apply_discover_roi -- same
+    discover_roi_min_snp_perc pre-filter as
+    test_low_freq_snp_excluded_by_default_min_snp_perc, but with
+    min_snp_perc=0.0 so noise's frequency (1/25=0.04 >= 0.0) passes the
+    pre-filter and is eligible for pairwise linkage comparison.
+
+    Test input: same BAM and snp_list (anchor, linked, noise) as
+    test_low_freq_snp_excluded_by_default_min_snp_perc, but
+    _apply_discover_roi called with min_perc=0.0, min_reads=1,
+    min_snp_perc=0.0.
+
+    Expected result: 'linked_snps' is present in noise and non-empty;
+    'noise' appears in anchor's linked_snps.
+    """
     pos_table, reach, masked = _make_anchor_linked_noise_bam(tmp_bam)
     snp_list = _make_snp_list()
     anchor, linked, noise = snp_list
@@ -142,7 +176,24 @@ def test_low_freq_snp_included_when_min_snp_perc_zero(tmp_bam):
 # Case 3: a SNP at exactly min_snp_perc is included (inclusive minimum, >=)
 # ---------------------------------------------------------------------------
 def test_min_snp_perc_boundary_is_inclusive(tmp_bam):
-    """A SNP at exactly freq == min_snp_perc (5%) is still considered."""
+    """Purpose: verify the discover_roi_min_snp_perc pre-filter uses an
+    inclusive (>=) comparison, so a SNP whose frequency exactly equals the
+    threshold (5%) is still included in linkage discovery.
+
+    Function under test: _apply_discover_roi -- same
+    discover_roi_min_snp_perc pre-filter, exercising the boundary case where
+    the frequency comparison is `>= min_snp_perc`, not strictly `>`.
+
+    Test input: 20 fragments at amplicon positions 100/130 (1 read carries
+    T@100 + C@130 ("both"), 17 reads carry only T@100, 2 reference reads);
+    snp_list = [anchor2 (18/20=90%), boundary (1/20=5% == min_snp_perc)];
+    _apply_discover_roi called with min_perc=0.0, min_reads=1,
+    min_snp_perc=0.05.
+
+    Expected result: 'linked_snps' is present in boundary, and 'anchor2'
+    appears in boundary's linked_snps -- the 5% SNP was not excluded by the
+    pre-filter.
+    """
     # 20 reads, 41bp starting at ref 95 -> covers amp positions 100, 130.
     reads = []
     # 1 read carrying both anchor2's variant (T@100) and boundary's variant (C@130)

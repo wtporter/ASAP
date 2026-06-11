@@ -67,6 +67,7 @@
         "breadth": { "type": "number", "default": 0.8, "description": "Minimum breadth of coverage required to consider an amplicon as present" },
         "mutation_depth": { "type": "integer", "default": 5, "description": "Minimum number of reads required to call a mutation at a given locus." },
         "fill_character": { "type": "string", "default": "N", "description": "Character to use for filling gaps." },
+        "qual_diff_threshold": { "type": "integer", "default": 10, "description": "Phred quality score difference required between paired-read bases at a mismatch position for the higher-quality base to be selected during SMOR consensus correction (generateSMORbam_correction.py -q argument). If below this threshold, the position is masked with fill_character." },
         "fill_gaps": { "type": "string", "default": "n", "description": "Character written at zero-coverage positions in the consensus sequence (passed to `--fill-gaps`)." },
         "mark_deletions": { "type": "string", "default": "_", "description": "Character written at deletion positions in the consensus sequence (passed to `--mark-deletions`)." },
         "whole_genome": {"type": "boolean", "default": false, "description": "JSON file uses a whole genome reference, so don't write out the consensus, depth, and proportion arrays for each sample"},
