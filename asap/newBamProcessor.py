@@ -19,6 +19,7 @@ import sys
 import os
 import re
 import argparse
+import functools
 import logging
 
 import pysam
@@ -360,125 +361,142 @@ CdsFeature = namedtuple('CdsFeature', ['name', 'strand', 'codon_boundaries'])
 # codon_boundaries: list of (start, end) 0-based amplicon-local coords per codon
 
 
-def _parse_genbank_cds(gb_file, amplicon_sequence):
+@functools.lru_cache(maxsize=None)
+def _load_genbank_records(gb_file):
     """
-    Extract CDS features from a GenBank file that overlap the amplicon and
-    return codon boundaries in amplicon-local (0-based) coordinates.
+    Read and cache all DNA records (with interval metadata) from a GenBank
+    file. Cached because _parse_genbank_cds is called once per amplicon, and
+    would otherwise re-read/re-parse the same file(s) for every amplicon.
+    """
+    return list(skbio.io.registry.read(gb_file, format='genbank', constructor=DNA))
 
-    Locates the amplicon in the GenBank record via exact string match (fast even
-    on full genomes).  Falls back to local_pairwise_align_nucleotide only for
-    records < 100 kb (avoids O(n*m) on whole-genome files).
+
+def _parse_genbank_cds(gb_files, amplicon_sequence):
+    """
+    Extract CDS features from one or more GenBank files that overlap the
+    amplicon and return codon boundaries in amplicon-local (0-based)
+    coordinates.
+
+    `gb_files` may be a single path or an iterable of paths; records from all
+    files are searched. Locates the amplicon in each GenBank record via exact
+    string match (fast even on full genomes). Falls back to
+    local_pairwise_align_nucleotide only for records < 100 kb (avoids
+    O(n*m) on whole-genome files).
 
     Returns a list of CdsFeature; returns [] with a warning when the amplicon
     cannot be located or no CDS features overlap.
     """
+    if isinstance(gb_files, (str, bytes, os.PathLike)):
+        gb_files = [gb_files]
+
     amp_seq = amplicon_sequence.upper().replace('\n', '').replace(' ', '')
     amp_len = len(amp_seq)
     results = []
 
-    for gb_seq in skbio.io.registry.read(gb_file, format='genbank', constructor=DNA):
-        genome_str = str(gb_seq).upper()
-        genome_len = len(genome_str)
+    for gb_file in gb_files:
+        for gb_seq in _load_genbank_records(gb_file):
+            genome_str = str(gb_seq).upper()
+            genome_len = len(genome_str)
 
-        # --- locate the amplicon in the genome ---
-        genome_offset = genome_str.find(amp_seq)
-        amp_is_rc = False
+            # --- locate the amplicon in the genome ---
+            genome_offset = genome_str.find(amp_seq)
+            amp_is_rc = False
 
-        if genome_offset == -1:
-            rc_seq = str(DNA(amp_seq).reverse_complement()).upper()
-            rc_offset = genome_str.find(rc_seq)
-            if rc_offset != -1:
-                # Amplicon is the reverse complement of a genome region.
-                # amplicon[0] == RC of genome[rc_offset + amp_len - 1]
-                genome_offset = rc_offset
-                amp_is_rc = True
+            if genome_offset == -1:
+                rc_seq = str(DNA(amp_seq).reverse_complement()).upper()
+                rc_offset = genome_str.find(rc_seq)
+                if rc_offset != -1:
+                    # Amplicon is the reverse complement of a genome region.
+                    # amplicon[0] == RC of genome[rc_offset + amp_len - 1]
+                    genome_offset = rc_offset
+                    amp_is_rc = True
 
-        if genome_offset == -1:
-            if genome_len > 100_000:
-                logging.warning(
-                    "Amplicon not found by exact match in large GenBank record "
-                    f"({gb_file}, {genome_len} bp); skipping CDS derivation"
-                )
-                continue
-            try:
-                alignment, score, start_end = local_pairwise_align_nucleotide(
-                    DNA(amp_seq), gb_seq
-                )
-                aligned_amp_len = start_end[0][1] - start_end[0][0]
-                if aligned_amp_len < amp_len * 0.9:
+            if genome_offset == -1:
+                if genome_len > 100_000:
                     logging.warning(
-                        f"Amplicon aligns at <90% to {gb_file}; skipping CDS derivation"
+                        "Amplicon not found by exact match in large GenBank record "
+                        f"({gb_file}, {genome_len} bp); skipping CDS derivation"
                     )
                     continue
-                genome_offset = start_end[1][0]
-            except Exception as exc:
-                logging.warning(f"Alignment failed for {gb_file}: {exc}")
+                try:
+                    alignment, score, start_end = local_pairwise_align_nucleotide(
+                        DNA(amp_seq), gb_seq
+                    )
+                    aligned_amp_len = start_end[0][1] - start_end[0][0]
+                    if aligned_amp_len < amp_len * 0.9:
+                        logging.warning(
+                            f"Amplicon aligns at <90% to {gb_file}; skipping CDS derivation"
+                        )
+                        continue
+                    genome_offset = start_end[1][0]
+                except Exception as exc:
+                    logging.warning(f"Alignment failed for {gb_file}: {exc}")
+                    continue
+
+            genome_amp_end = genome_offset + amp_len
+
+            # --- iterate CDS features that overlap the amplicon window ---
+            if not hasattr(gb_seq, 'interval_metadata'):
                 continue
 
-        genome_amp_end = genome_offset + amp_len
+            for feature in gb_seq.interval_metadata.query(metadata={'type': 'CDS'}):
+                feat_name = (feature.metadata.get('gene') or
+                             feature.metadata.get('locus_tag') or
+                             'unknown').strip('"')
 
-        # --- iterate CDS features that overlap the amplicon window ---
-        if not hasattr(gb_seq, 'interval_metadata'):
-            continue
+                # skbio stores strand as int: 1 (forward) or -1 (reverse)
+                raw_strand = feature.metadata.get('strand', 1)
+                feat_strand = '+' if raw_strand in (1, '+', '1') else '-'
 
-        for feature in gb_seq.interval_metadata.query(metadata={'type': 'CDS'}):
-            feat_name = (feature.metadata.get('gene') or
-                         feature.metadata.get('locus_tag') or
-                         'unknown').strip('"')
+                # codon_start is 1-based in GenBank; convert to 0-based reading-frame offset
+                codon_start_offset = int(feature.metadata.get('codon_start', 1)) - 1
 
-            # skbio stores strand as int: 1 (forward) or -1 (reverse)
-            raw_strand = feature.metadata.get('strand', 1)
-            feat_strand = '+' if raw_strand in (1, '+', '1') else '-'
+                # Collect all genomic positions in CDS order (handles compound locations)
+                cds_genome_positions = []
+                for (feat_start, feat_end) in feature.bounds:
+                    cds_genome_positions.extend(range(feat_start, feat_end))
+                if feat_strand == '-':
+                    cds_genome_positions = list(reversed(cds_genome_positions))
 
-            # codon_start is 1-based in GenBank; convert to 0-based reading-frame offset
-            codon_start_offset = int(feature.metadata.get('codon_start', 1)) - 1
+                # Find which CDS positions fall within the amplicon window
+                overlapping_cds_indices = [
+                    i for i, gp in enumerate(cds_genome_positions)
+                    if genome_offset <= gp < genome_amp_end
+                ]
+                if len(overlapping_cds_indices) < 3:
+                    continue  # need at least one full codon
 
-            # Collect all genomic positions in CDS order (handles compound locations)
-            cds_genome_positions = []
-            for (feat_start, feat_end) in feature.bounds:
-                cds_genome_positions.extend(range(feat_start, feat_end))
-            if feat_strand == '-':
-                cds_genome_positions = list(reversed(cds_genome_positions))
+                first_cds_idx = overlapping_cds_indices[0]
+                # Frame: how many positions into a codon is the first overlapping base?
+                frame_in_codon = (first_cds_idx + codon_start_offset) % 3
+                # Skip to the next codon boundary
+                skip = (3 - frame_in_codon) % 3
+                coding_cds_indices = overlapping_cds_indices[skip:]
 
-            # Find which CDS positions fall within the amplicon window
-            overlapping_cds_indices = [
-                i for i, gp in enumerate(cds_genome_positions)
-                if genome_offset <= gp < genome_amp_end
-            ]
-            if len(overlapping_cds_indices) < 3:
-                continue  # need at least one full codon
+                # Convert to amplicon-local coords
+                def _genome_to_amp(gp):
+                    if amp_is_rc:
+                        return amp_len - 1 - (gp - genome_offset)
+                    return gp - genome_offset
 
-            first_cds_idx = overlapping_cds_indices[0]
-            # Frame: how many positions into a codon is the first overlapping base?
-            frame_in_codon = (first_cds_idx + codon_start_offset) % 3
-            # Skip to the next codon boundary
-            skip = (3 - frame_in_codon) % 3
-            coding_cds_indices = overlapping_cds_indices[skip:]
+                codon_boundaries = []
+                for i in range(0, len(coding_cds_indices) - 2, 3):
+                    triplet_cds = coding_cds_indices[i:i + 3]
+                    if len(triplet_cds) < 3:
+                        break
+                    amp_positions = [_genome_to_amp(cds_genome_positions[ci])
+                                     for ci in triplet_cds]
+                    codon_boundaries.append((min(amp_positions), max(amp_positions) + 1))
 
-            # Convert to amplicon-local coords
-            def _genome_to_amp(gp):
-                if amp_is_rc:
-                    return amp_len - 1 - (gp - genome_offset)
-                return gp - genome_offset
-
-            codon_boundaries = []
-            for i in range(0, len(coding_cds_indices) - 2, 3):
-                triplet_cds = coding_cds_indices[i:i + 3]
-                if len(triplet_cds) < 3:
-                    break
-                amp_positions = [_genome_to_amp(cds_genome_positions[ci])
-                                 for ci in triplet_cds]
-                codon_boundaries.append((min(amp_positions), max(amp_positions) + 1))
-
-            if codon_boundaries:
-                results.append(CdsFeature(
-                    name=feat_name,
-                    strand=feat_strand,
-                    codon_boundaries=codon_boundaries,
-                ))
+                if codon_boundaries:
+                    results.append(CdsFeature(
+                        name=feat_name,
+                        strand=feat_strand,
+                        codon_boundaries=codon_boundaries,
+                    ))
 
     if not results:
-        logging.debug(f"No overlapping CDS features found in {gb_file} for amplicon")
+        logging.debug(f"No overlapping CDS features found in {gb_files} for amplicon")
     return results
 
 
@@ -718,7 +736,8 @@ def _apply_discover_roi(snp_list, pos_table, reach, masked, offset, min_perc, mi
     Each entry in 'linked_snps' is a dict with:
         name, ref_pos_allele, linked_pct, linked_count,
         standalone_pct, standalone_count, masked_pct, masked_count,
-        nonoverlap_pct, nonoverlap_count, spanning_depth, snp_depth
+        nonoverlap_pct, nonoverlap_count, percentage_linked,
+        spanning_depth, snp_depth
 
     `min_snp_perc` is a pre-filter on `callable_snps`: a SNP's own variant
     frequency must be >= this value to be considered at all, whether as an
@@ -786,6 +805,13 @@ def _apply_discover_roi(snp_list, pos_table, reach, masked, offset, min_perc, mi
             masked_pct = masked_count / max(count_a, 1) * 100
             nonoverlap_pct = nonoverlap_count / max(count_a, 1) * 100
 
+            # Of s_a's reads with a confident call at s_b's position (i.e.
+            # excluding non-overlapping and masked reads), the percentage
+            # that carry s_b's linked allele. A perfect link is 100%
+            # regardless of how many reads don't overlap or are masked.
+            confident_count = linked_count + standalone_count
+            percentage_linked = linked_count / max(confident_count, 1) * 100
+
             linked.append({
                 'name': s_b['name'],
                 'ref_pos_allele': f"{s_b['reference']}{s_b['position']}",
@@ -797,6 +823,7 @@ def _apply_discover_roi(snp_list, pos_table, reach, masked, offset, min_perc, mi
                 'masked_count': masked_count,
                 'nonoverlap_pct': round(nonoverlap_pct, 1),
                 'nonoverlap_count': nonoverlap_count,
+                'percentage_linked': round(percentage_linked, 1),
                 'spanning_depth': spanning_depth,
                 'snp_depth': int(s_a.get('depth', 0)),
             })
@@ -809,13 +836,12 @@ def _add_linked_snps_node(snp_node, linked_snps):
     """Add a <linked_snps> sub-element to a SNP XML node."""
     ls_node = ElementTree.SubElement(snp_node, 'linked_snps')
     for entry in linked_snps:
-        percentage_linked = round(entry['linked_count'] / max(entry['spanning_depth'], 1) * 100, 1)
         link_node = ElementTree.SubElement(ls_node, 'linked_snp', {
             'name': entry['name'],
             'ref_pos': entry['ref_pos_allele'],
             'spanning_depth': str(entry['spanning_depth']),
             'linked_depth': str(entry['linked_count']),
-            'percentage_linked': str(percentage_linked),
+            'percentage_linked': str(entry['percentage_linked']),
         })
         full_dist_node = ElementTree.SubElement(link_node, 'full_distribution')
         full_dist_node.text = (
@@ -1068,7 +1094,7 @@ USAGE
         parser.add_argument("--identity-stats", metavar="FILE", dest="identity_stats", type=argparse.FileType('r'), default=None, help="identity_filter_stats.tsv from IDENTITY_FILTER step. [default: none]")
         parser.add_argument("--smor-stats", metavar="FILE", dest="smor_stats", type=argparse.FileType('r'), default=None, help="smor_stats.tsv from SMOR/SMOR_CORRECTION step. [default: none]")
         parser.add_argument("--codon-correction", action="store_true", dest="codon_correction", default=False, help="merge SNPs in the same codon using GenBank CDS annotations. Requires --codon-correction-genbank. [default: False]")
-        parser.add_argument("--codon-correction-genbank", metavar="FILE", dest="codon_correction_genbank", default=None, help="GenBank file for --codon-correction codon boundary derivation. [default: none]")
+        parser.add_argument("--codon-correction-genbank", metavar="FILE", dest="codon_correction_genbank", nargs='+', default=None, help="One or more GenBank files for --codon-correction codon boundary derivation. [default: none]")
         parser.add_argument("--codon-correction-error", dest="codon_correction_error", type=float, default=0.05, help="frequency tolerance (0-1) for complete vs. partial SNP merge. [default: 0.05]")
         parser.add_argument("--codon-correction-min-reads", dest="codon_correction_min_reads", type=int, default=10, help="minimum spanning reads to confirm codon linkage. [default: 10]")
         parser.add_argument("--discover-roi", action="store_true", dest="discover_roi", default=False, help="add <linked_snps> field to SNP XML nodes showing read-level co-occurring variants. [default: False]")

@@ -51,7 +51,11 @@ workflow {
     
     // This will be a list of paths if GenBank, or a single path otherwise
     def gb_file_to_use = is_genbank ? input_refs : (params.asaptools_genbank_location ? file(params.asaptools_genbank_location) : null)
-    
+
+    if (params.codon_correction && !gb_file_to_use) {
+        error "ERROR: --codon_correction requires a GenBank reference: provide --reference_input as GenBank file(s) (.gb/.gbk/.genbank) or set --asaptools_genbank_location."
+    }
+
     if (first_ref.name.endsWith('.json')) {
         json_ch = Channel.value(first_ref)
     } else {
@@ -236,7 +240,7 @@ workflow {
             .join(primer_stats_by_id)
             .join(identity_stats_by_id)
             .join(smor_stats_by_id)
-        def xml_output = PROCESS_BAM(ch_bam_for_asap.combine(json_ch))
+        def xml_output = PROCESS_BAM(ch_bam_for_asap.combine(json_ch).combine(Channel.value(gb_file_to_use ?: [])))
         
         // --- ASAP Tools  R Processing ---
         if(params.asaptools_processing) {

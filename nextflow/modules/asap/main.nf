@@ -156,7 +156,8 @@ process PROCESS_BAM {
           path(primer_stats,   stageAs: 'primer_stats'),
           path(identity_stats, stageAs: 'identity_stats'),
           path(smor_stats,     stageAs: 'smor_stats'),
-          path(assay_json)
+          path(assay_json),
+          path("genbank_input/*")
 
     output:
     tuple val(sample_id), path("${sample_id}.xml"), emit: xml_output
@@ -167,8 +168,7 @@ process PROCESS_BAM {
     def identity_flag = identity_stats.size() > 0 ? "--identity-stats ${identity_stats}" : ""
     def smor_flag     = smor_stats.size()     > 0 ? "--smor-stats ${smor_stats}"         : ""
     def codon_flag        = params.codon_correction ? "--codon-correction" : ""
-    def codon_gb_flag     = (params.codon_correction && params.codon_correction_genbank)
-                              ? "--codon-correction-genbank ${params.codon_correction_genbank}" : ""
+    def codon_gb_flag     = params.codon_correction ? "--codon-correction-genbank genbank_input/*" : ""
     def codon_err_flag    = params.codon_correction
                               ? "--codon-correction-error ${params.codon_correction_error}" : ""
     def codon_min_flag    = params.codon_correction

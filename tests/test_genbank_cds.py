@@ -11,7 +11,7 @@ import textwrap
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from asap.newBamProcessor import _parse_genbank_cds
+from asap.newBamProcessor import _parse_genbank_cds, _load_genbank_records
 
 H37RV_GB = os.path.join(
     os.path.dirname(__file__),
@@ -193,6 +193,75 @@ def test_reverse_complement_amplicon(tmp_path):
     assert len(results) == 1
     assert results[0].name == "eee"
     assert len(results[0].codon_boundaries) == 5
+
+
+# ---------------------------------------------------------------------------
+# Case 6: multiple GenBank files — CDS found regardless of which file/order
+# ---------------------------------------------------------------------------
+def test_multi_file_genbank(tmp_path):
+    """
+    _parse_genbank_cds should accept a list of GenBank files and search all of
+    them for the amplicon, regardless of which file contains the match or the
+    order the files are given in.
+    """
+    # File with no overlapping CDS for the amplicon used below.
+    other_seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # 32 A's
+    other_features = textwrap.dedent("""\
+             CDS             1..30
+                             /gene="zzz"
+                             /codon_start=1
+                             /product="hypothetical"
+    """)
+    gb_other = _write_gb(tmp_path, "MULTI_OTHER", other_seq, other_features)
+
+    # File containing the amplicon and its overlapping CDS.
+    hit_seq = "ATG" * 10  # 30 bp
+    hit_features = textwrap.dedent("""\
+             CDS             1..30
+                             /gene="fff"
+                             /codon_start=1
+                             /product="hypothetical"
+    """)
+    gb_hit = _write_gb(tmp_path, "MULTI_HIT", hit_seq, hit_features)
+
+    amplicon = hit_seq[3:18]  # 5 complete codons
+
+    for gb_files in ([gb_other, gb_hit], [gb_hit, gb_other]):
+        results = _parse_genbank_cds(gb_files, amplicon)
+        assert len(results) == 1
+        assert results[0].name == "fff"
+        assert len(results[0].codon_boundaries) == 5
+
+
+# ---------------------------------------------------------------------------
+# Case 7: GenBank records are cached across calls
+# ---------------------------------------------------------------------------
+def test_genbank_records_cached(tmp_path):
+    """
+    Repeated _parse_genbank_cds calls for the same file should hit the
+    _load_genbank_records cache instead of re-reading/re-parsing it.
+    """
+    seq = "ATG" * 10
+    features = textwrap.dedent("""\
+             CDS             1..30
+                             /gene="ggg"
+                             /codon_start=1
+                             /product="hypothetical"
+    """)
+    gb = _write_gb(tmp_path, "CACHETEST", seq, features)
+    amplicon = seq[3:18]
+
+    _load_genbank_records.cache_clear()
+
+    _parse_genbank_cds(gb, amplicon)
+    info = _load_genbank_records.cache_info()
+    assert info.misses == 1
+    assert info.hits == 0
+
+    _parse_genbank_cds(gb, amplicon)
+    info = _load_genbank_records.cache_info()
+    assert info.misses == 1
+    assert info.hits == 1
 
 
 # ---------------------------------------------------------------------------
