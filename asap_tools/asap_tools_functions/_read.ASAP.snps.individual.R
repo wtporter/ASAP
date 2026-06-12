@@ -100,6 +100,26 @@ read.ASAP.snps.individual <- function(XML) {
             linked_snp_shared_depths <- NA_character_
           }
 
+          call_qual_node <- xml_find_first(SNP_Node,
+            paste0("base_quality/qual[@base='", snp_call, "']"))
+          if (!inherits(call_qual_node, "xml_missing")) {
+            snp_call_qual_mean   <- xml_attr(call_qual_node, "mean")
+            snp_call_qual_median <- xml_attr(call_qual_node, "median")
+            snp_call_qual_min    <- xml_attr(call_qual_node, "min")
+            snp_call_qual_max    <- xml_attr(call_qual_node, "max")
+          } else {
+            snp_call_qual_mean <- snp_call_qual_median <- snp_call_qual_min <- snp_call_qual_max <- NA_character_
+          }
+
+          strand_node <- xml_find_first(SNP_Node,
+            paste0("base_strand_distribution/strand[@base='", snp_call, "']"))
+          if (!inherits(strand_node, "xml_missing")) {
+            snp_call_R1 <- xml_attr(strand_node, "R1")
+            snp_call_R2 <- xml_attr(strand_node, "R2")
+          } else {
+            snp_call_R1 <- snp_call_R2 <- NA_character_
+          }
+
           SNP_Info <- data.frame(
             location_depth   = xml_attr(SNP_Node, "depth"),
             snp_name         = xml_attr(SNP_Node, "name"),
@@ -118,7 +138,13 @@ read.ASAP.snps.individual <- function(XML) {
             linked_snp_targets       = linked_snp_targets,
             linked_snp_linkage_pcts  = linked_snp_linkage_pcts,
             linked_snp_co_counts     = linked_snp_co_counts,
-            linked_snp_shared_depths = linked_snp_shared_depths
+            linked_snp_shared_depths = linked_snp_shared_depths,
+            snp_call_qual_mean       = snp_call_qual_mean,
+            snp_call_qual_median     = snp_call_qual_median,
+            snp_call_qual_min        = snp_call_qual_min,
+            snp_call_qual_max        = snp_call_qual_max,
+            snp_call_R1              = snp_call_R1,
+            snp_call_R2              = snp_call_R2
           )
 
           Temp <- cbind(Run_Info, Sample_Info, Assay_Info, Amplicon_Info, SNP_Info)
@@ -133,7 +159,9 @@ read.ASAP.snps.individual <- function(XML) {
   if (nrow(Out) > 0) {
     row.names(Out) <- 1:nrow(Out)
     num_cols <- c("Total_Reads", "Trimmed_Reads", "Mapped_Reads", "unassigned_reads",
-                  "unmapped_reads", "location_depth", "snp_position", "snp_depth", "snp_proportion")
+                  "unmapped_reads", "location_depth", "snp_position", "snp_depth", "snp_proportion",
+                  "snp_call_qual_mean", "snp_call_qual_median", "snp_call_qual_min", "snp_call_qual_max",
+                  "snp_call_R1", "snp_call_R2")
     num_cols <- intersect(num_cols, names(Out))
     Out[num_cols] <- lapply(Out[num_cols], function(x) as.numeric(as.character(x)))
   }

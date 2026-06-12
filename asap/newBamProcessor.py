@@ -23,7 +23,8 @@ import functools
 import logging
 
 import pysam
-from collections import Counter, namedtuple
+import statistics
+from collections import Counter, defaultdict, namedtuple
 from xml.etree import ElementTree
 import skbio.io
 from skbio import DNA
@@ -150,6 +151,10 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
     # for each position in alignment/pileup
     for pileupcolumn in pileup:
         base_counter = Counter()
+        base_quality_scores = defaultdict(list)
+        base_R1_counter = Counter()
+        base_R2_counter = Counter()
+        base_SE_counter = Counter()
         position = pileupcolumn.pos+1
         # This fills gaps in the alignment with n's or user defined char
         if fill_gap_char != "false":
@@ -171,20 +176,44 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
                               pileupread.alignment.query_qualities[pileupread.query_position_or_next - 1]) / 2
                     if qscore >= base_qual:
                         passed_Qual_filter += 1
-                        base_counter.update({"_" : 1})
+                        base_counter.update({"_": 1})
+                        base_quality_scores["_"].append(qscore)
+                        if pileupread.alignment.is_read1:
+                            base_R1_counter.update({"_": 1})
+                        elif pileupread.alignment.is_read2:
+                            base_R2_counter.update({"_": 1})
+                        else:
+                            base_SE_counter.update({"_": 1})
                     else:
                         quality_discard_array[pileupcolumn.pos] += 1
                 elif pileupread.alignment.query_qualities[pileupread.query_position] >= base_qual: # check here
                     passed_Qual_filter += 1
+                    qual_score = pileupread.alignment.query_qualities[pileupread.query_position]
                     if pileupread.indel < 0: #This means the next position is a deletion, we'll process later
                         for d in range(1, abs(pileupread.indel)+1):
                             deletion_counter.update({str(position + d)})
                     if pileupread.indel > 0: #This means the next position is an insertion, unlike with deletions, this we can process now
                         start = pileupread.query_position
                         end = pileupread.query_position + pileupread.indel + 1
-                        base_counter.update({pileupread.alignment.query_sequence[start:end]: 1})
+                        base_key = pileupread.alignment.query_sequence[start:end]
+                        base_counter.update({base_key: 1})
+                        base_quality_scores[base_key].append(qual_score)
+                        if pileupread.alignment.is_read1:
+                            base_R1_counter.update({base_key: 1})
+                        elif pileupread.alignment.is_read2:
+                            base_R2_counter.update({base_key: 1})
+                        else:
+                            base_SE_counter.update({base_key: 1})
                     else:
-                        base_counter.update(pileupread.alignment.query_sequence[pileupread.query_position])
+                        base_key = pileupread.alignment.query_sequence[pileupread.query_position]
+                        base_counter.update(base_key)
+                        base_quality_scores[base_key].append(qual_score)
+                        if pileupread.alignment.is_read1:
+                            base_R1_counter.update({base_key: 1})
+                        elif pileupread.alignment.is_read2:
+                            base_R2_counter.update({base_key: 1})
+                        else:
+                            base_SE_counter.update({base_key: 1})
                 else:
                     quality_discard_array[pileupcolumn.pos] += 1
             except Exception as e:
@@ -269,7 +298,7 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
             translated = position + offset #normal case where gene encompasses the amplicon
         if position in snp_dict:
             for (name, reference, variant, significance) in snp_dict[position]:
-                snp = {'name':name, 'position':str(translated), 'depth':str(column_depth), 'reference':reference, 'variant':variant, 'basecalls':base_counter}
+                snp = {'name':name, 'position':str(translated), 'depth':str(column_depth), 'reference':reference, 'variant':variant, 'basecalls':base_counter, 'base_qualities':base_quality_scores, 'base_R1':base_R1_counter, 'base_R2':base_R2_counter, 'base_SE':base_SE_counter}
                 variant_proportion = base_counter[variant]/column_depth
                 variant_count = base_counter[variant]
                 if variant_proportion >= proportion and variant_count >= mutdepth:
@@ -284,7 +313,7 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
             # We've covered it, now remove it from the dict so we can see what we might have missed
             del snp_dict[position]
         elif depth_passed and snp_call and snp_count >= mutdepth and snp_call_proportion >= proportion:
-            snp = {'name':f"{reference_call}{translated}{snp_call}", 'position':str(translated), 'depth':str(column_depth), 'reference':reference_call, 'variant':snp_call, 'basecalls':base_counter}
+            snp = {'name':f"{reference_call}{translated}{snp_call}", 'position':str(translated), 'depth':str(column_depth), 'reference':reference_call, 'variant':snp_call, 'basecalls':base_counter, 'base_qualities':base_quality_scores, 'base_R1':base_R1_counter, 'base_R2':base_R2_counter, 'base_SE':base_SE_counter}
             if 0 in snp_dict:
                 (name, *rest, significance) = snp_dict[0][0]
                 snp['name'] = name
@@ -350,6 +379,33 @@ def _add_snp_node(parent, snp):
             significance_node.set('flag', snp['flag'])
     if base_counter:
         ElementTree.SubElement(snp_node, 'base_distribution', {k:str(v) for k,v in base_counter.items()})
+        base_R1 = snp.get('base_R1')
+        base_R2 = snp.get('base_R2')
+        base_SE = snp.get('base_SE')
+        if base_R1 or base_R2:
+            strand_node = ElementTree.SubElement(snp_node, 'base_strand_distribution')
+            for base in base_counter:
+                attrs = {
+                    'base': base,
+                    'R1':   str(base_R1.get(base, 0) if base_R1 else 0),
+                    'R2':   str(base_R2.get(base, 0) if base_R2 else 0),
+                }
+                if base_SE and base_SE.get(base, 0):
+                    attrs['SE'] = str(base_SE[base])
+                ElementTree.SubElement(strand_node, 'strand', attrs)
+        base_qualities = snp.get('base_qualities')
+        if base_qualities:
+            qual_node = ElementTree.SubElement(snp_node, 'base_quality')
+            for base in base_counter:
+                if base in base_qualities and base_qualities[base]:
+                    q = base_qualities[base]
+                    ElementTree.SubElement(qual_node, 'qual', {
+                        'base':   base,
+                        'mean':   f"{statistics.mean(q):.1f}",
+                        'median': f"{statistics.median(q):.1f}",
+                        'min':    str(min(q)),
+                        'max':    str(max(q)),
+                    })
     return snp_node
 
 
