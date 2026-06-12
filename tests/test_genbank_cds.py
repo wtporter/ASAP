@@ -11,7 +11,7 @@ import textwrap
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from asap.newBamProcessor import _parse_genbank_cds, _load_genbank_records
+from asap.genbank_cds import _parse_genbank_cds, _load_genbank_records
 
 H37RV_GB = os.path.join(
     os.path.dirname(__file__),

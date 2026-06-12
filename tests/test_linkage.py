@@ -10,7 +10,7 @@ import pytest
 import pysam
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from asap.newBamProcessor import _build_fragment_allele_table, _tally_allele_linkage
+from asap.allele_linkage import _build_fragment_allele_table, _tally_allele_linkage
 
 REF_LEN = 1000
 REF_NAME = "test_ref"
