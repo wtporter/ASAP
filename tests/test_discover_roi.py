@@ -63,7 +63,7 @@ def tmp_bam(tmp_path):
 
 
 def _linked_names(snp):
-    return {entry['name'] for entry in snp.get('linked_snps', [])}
+    return {entry['target_name'] for entry in snp.get('linked_snps', [])}
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ def _make_anchor_linked_noise_bam(tmp_bam):
         reads.append(_make_read(f"ref{i}", "A" * 41, 95))
 
     samdata = tmp_bam(reads)
-    pos_table, reach, masked = _build_fragment_allele_table(samdata, [100, 110, 120], REF_NAME)
+    pos_table, reach, masked, _ = _build_fragment_allele_table(samdata, [100, 110, 120], REF_NAME)
     samdata.close()
     return pos_table, reach, masked
 
@@ -218,7 +218,7 @@ def test_min_snp_perc_boundary_is_inclusive(tmp_bam):
         reads.append(_make_read(f"ref{i}", "A" * 41, 95))
 
     samdata = tmp_bam(reads)
-    pos_table, reach, masked = _build_fragment_allele_table(samdata, [100, 130], REF_NAME)
+    pos_table, reach, masked, _ = _build_fragment_allele_table(samdata, [100, 130], REF_NAME)
     samdata.close()
 
     anchor2 = {'name': 'anchor2', 'position': '101', 'reference': 'A', 'variant': 'T',
@@ -236,64 +236,59 @@ def test_min_snp_perc_boundary_is_inclusive(tmp_bam):
 
 
 # ---------------------------------------------------------------------------
-# Case 4: comparable_count, spanning_depth, percentage_linked and
-# linked_pct (XML "snp_percentage_linked") are distinct quantities with
-# different denominators
+# Case 4: linked_snps entry fields use the new semantic names
 # ---------------------------------------------------------------------------
-def test_comparable_count_and_spanning_depth_distinct(tmp_bam):
-    """Purpose: verify that for a partially-linked SNP pair,
-    spanning_depth, comparable_count, percentage_linked and linked_pct take
-    on distinct values, each with its own denominator.
+def test_linked_snps_entry_fields(tmp_bam):
+    """Purpose: verify that for a partially-linked SNP pair the linked_snps
+    entry carries the renamed fields with correct values.
 
     Function under test: _apply_discover_roi -- the linked_snps entry
     construction, specifically:
-        comparable_count = linked_count + standalone_count
-        percentage_linked = linked_count / comparable_count * 100
-        linked_pct        = linked_count / count_a * 100
-    while spanning_depth counts ALL fragments confidently called at both
-    positions regardless of the allele at amp_a (so it includes reference
-    reads that don't carry s_a's variant at all).
+        linkage_pct          = co_count / (co_count + anchor_only) * 100
+        sample_frequency_pct = co_count / shared_read_depth * 100
+        target_only          = reads with s_b's variant but NOT s_a's
+        neither_variant      = shared_read_depth - co - anchor_only - target_only
 
     Test input: amp positions 100 (s_a, A->T) and 110 (s_b, A->C); 41bp
     reads starting at ref 95 unless noted:
-        - 6 reads: T@100, C@110              (linked)
-        - 3 reads: T@100, A@110              (standalone: confident, unlinked)
-        - 1 read (10bp): T@100, too short to reach 110 (non-overlapping)
-        - 5 reads: A@100, A@110              (reference: spans both
-          positions but doesn't carry s_a's variant)
+        - 6 reads: T@100, C@110              (both_variants)
+        - 3 reads: T@100, A@110              (anchor_only: confident, unlinked)
+        - 1 read (10bp): T@100, too short to reach 110 (read_too_short)
+        - 5 reads: A@100, A@110              (neither_variant: reference,
+          spans both but no variant at either position)
     snp_list = [s_a (depth=15, T count=10), s_b (depth=14, C count=6)];
     _apply_discover_roi called with min_perc=0.0, min_reads=1,
     min_snp_perc=0.0.
 
-    Expected result: in s_a's linked_snps entry for s_b: linked_count == 6,
-    standalone_count == 3, nonoverlap_count == 1, comparable_count == 9,
-    spanning_depth == 14, percentage_linked == 66.7, linked_pct == 60.0.
+    Expected result: co_count=6, anchor_only=3, target_only=0,
+    neither_variant=5, read_too_short=1, shared_read_depth=14,
+    linkage_pct=66.7, sample_frequency_pct=42.9.
     """
     reads = []
-    # 6 reads: T@100, C@110 (linked)
+    # 6 reads: T@100, C@110 (both variants)
     for i in range(6):
         seq = list("A" * 41)
         seq[5] = "T"
         seq[15] = "C"
         reads.append(_make_read(f"linked{i}", "".join(seq), 95))
 
-    # 3 reads: T@100, A@110 (standalone)
+    # 3 reads: T@100, A@110 (anchor only)
     for i in range(3):
         seq = list("A" * 41)
         seq[5] = "T"
         reads.append(_make_read(f"standalone{i}", "".join(seq), 95))
 
-    # 1 read: T@100, too short to reach 110 (non-overlapping)
+    # 1 read: T@100, too short to reach 110
     seq = list("A" * 10)
     seq[5] = "T"
     reads.append(_make_read("short0", "".join(seq), 95))
 
-    # 5 reads: A@100, A@110 (reference -- spans both, not s_a's variant)
+    # 5 reads: A@100, A@110 (reference -- spans both, neither variant)
     for i in range(5):
         reads.append(_make_read(f"ref{i}", "A" * 41, 95))
 
     samdata = tmp_bam(reads)
-    pos_table, reach, masked = _build_fragment_allele_table(samdata, [100, 110], REF_NAME)
+    pos_table, reach, masked, _ = _build_fragment_allele_table(samdata, [100, 110], REF_NAME)
     samdata.close()
 
     s_a = {'name': 's_a', 'position': '101', 'reference': 'A', 'variant': 'T',
@@ -305,59 +300,66 @@ def test_comparable_count_and_spanning_depth_distinct(tmp_bam):
     _apply_discover_roi(snp_list, pos_table, reach, masked, offset=0,
                          min_perc=0.0, min_reads=1, min_snp_perc=0.0)
 
-    entry = next(e for e in s_a['linked_snps'] if e['name'] == 's_b')
-    assert entry['linked_count'] == 6
-    assert entry['standalone_count'] == 3
-    assert entry['nonoverlap_count'] == 1
-    assert entry['comparable_count'] == 9
-    assert entry['spanning_depth'] == 14
-    assert entry['percentage_linked'] == 66.7
-    assert entry['linked_pct'] == 60.0
+    entry = next(e for e in s_a['linked_snps'] if e['target_name'] == 's_b')
+    assert entry['co_count'] == 6
+    assert entry['anchor_only'] == 3
+    assert entry['target_only'] == 0
+    assert entry['neither_variant'] == 5
+    assert entry['read_too_short'] == 1
+    assert entry['shared_read_depth'] == 14
+    assert entry['linkage_pct'] == 66.7
+    assert entry['sample_frequency_pct'] == 42.9
 
 
 # ---------------------------------------------------------------------------
-# Case 5: _add_linked_snps_node maps entry fields to the expected XML
-# attributes, including comparable_depth and snp_percentage_linked
+# Case 5: _add_linked_snps_node produces the expected XML structure
 # ---------------------------------------------------------------------------
-def test_add_linked_snps_node_xml_attributes():
+def test_add_linked_snps_node_xml_structure():
     """Purpose: verify _add_linked_snps_node serializes a linked_snps entry
-    dict to a <linked_snp> element with the expected attributes, including
-    the comparable_depth and snp_percentage_linked fields.
+    to a <linked_snp> element with anchor/target attributes and a
+    <read_evidence> child element.
 
     Function under test: _add_linked_snps_node -- pure XML serialization of
     a single linked_snps entry as produced by _apply_discover_roi.
 
-    Test input: a synthetic entry dict with spanning_depth=14,
-    linked_count=6, comparable_count=9, percentage_linked=66.7,
-    linked_pct=60.0.
+    Test input: a synthetic entry dict and anchor_name='s_a'.
 
-    Expected result: the resulting <linked_snp> element has
-    spanning_depth="14", linked_depth="6", comparable_depth="9",
-    percentage_linked="66.7", and snp_percentage_linked="60.0".
+    Expected result: <linked_snp anchor_variant="s_a" target_variant="s_b"
+    shared_read_depth="14" co_occurring_count="6" linkage_pct="66.7"
+    sample_frequency_pct="42.9"> with a <read_evidence> child carrying
+    both_variants, anchor_only, target_only, neither_variant, masked, and
+    read_too_short.
     """
     snp_node = ElementTree.Element('snp')
     entry = {
-        'name': 's_b',
-        'ref_pos_allele': 'A111',
-        'linked_pct': 60.0,
-        'linked_count': 6,
-        'standalone_pct': 30.0,
-        'standalone_count': 3,
-        'masked_pct': 0.0,
-        'masked_count': 0,
-        'nonoverlap_pct': 10.0,
-        'nonoverlap_count': 1,
-        'percentage_linked': 66.7,
-        'comparable_count': 9,
-        'spanning_depth': 14,
-        'snp_depth': 15,
+        'target_name': 's_b',
+        'shared_read_depth': 14,
+        'co_count': 6,
+        'linkage_pct': 66.7,
+        'sample_frequency_pct': 42.9,
+        'both_variants': 6,
+        'anchor_only': 3,
+        'target_only': 0,
+        'neither_variant': 5,
+        'masked': 0,
+        'read_too_short': 1,
     }
 
-    _add_linked_snps_node(snp_node, [entry])
+    _add_linked_snps_node(snp_node, [entry], anchor_name='s_a')
 
     link_node = snp_node.find('linked_snps/linked_snp')
-    assert link_node.attrib['spanning_depth'] == '14'
-    assert link_node.attrib['linked_depth'] == '6'
-    assert link_node.attrib['comparable_depth'] == '9'
-    assert link_node.attrib['percentage_linked'] == '66.7'
-    assert link_node.attrib['snp_percentage_linked'] == '60.0'
+    assert link_node.attrib['anchor_variant'] == 's_a'
+    assert link_node.attrib['target_variant'] == 's_b'
+    assert link_node.attrib['shared_read_depth'] == '14'
+    assert link_node.attrib['co_occurring_count'] == '6'
+    assert link_node.attrib['linkage_pct'] == '66.7'
+    assert link_node.attrib['sample_frequency_pct'] == '42.9'
+
+    ev = link_node.find('read_evidence')
+    assert ev is not None
+    assert ev.attrib['both_variants'] == '6'
+    assert ev.attrib['anchor_only'] == '3'
+    assert ev.attrib['target_only'] == '0'
+    assert ev.attrib['neither_variant'] == '5'
+    assert ev.attrib['masked'] == '0'
+    assert ev.attrib['read_too_short'] == '1'

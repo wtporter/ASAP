@@ -99,10 +99,11 @@ def test_forward_cds_basic(tmp_path):
     assert feat.strand == "+"
     assert len(feat.codon_boundaries) == 5
     # All codon boundaries must be within amplicon local coords [0, 15)
-    for start, end in feat.codon_boundaries:
+    for start, end, ref_seq in feat.codon_boundaries:
         assert 0 <= start < 15
         assert 0 < end <= 15
         assert end - start == 3
+        assert len(ref_seq) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +140,7 @@ def test_frame_skip_mid_codon(tmp_path):
     assert len(results) == 1
     feat = results[0]
     # First complete codon should start at amplicon position 2 (after 2-nt skip)
-    first_start = min(s for s, e in feat.codon_boundaries)
+    first_start = min(s for s, e, r in feat.codon_boundaries)
     assert first_start == 2
 
 
@@ -381,7 +382,48 @@ def test_rpob_in_h37rv(tmp_path):
     # All codon boundaries must be within the amplicon
     rpob_feat = next(f for f in results if "rpoB" in f.name or "Rv0667" in f.name)
     amp_len = len(rpob_excerpt)
-    for start, end in rpob_feat.codon_boundaries:
+    for start, end, ref_seq in rpob_feat.codon_boundaries:
         assert 0 <= start < amp_len, f"codon start {start} out of amplicon range"
         assert 0 < end <= amp_len, f"codon end {end} out of amplicon range"
         assert end - start == 3, f"codon span {end - start} != 3"
+        assert len(ref_seq) == 3, f"ref_seq '{ref_seq}' is not 3 bp"
+
+
+# ---------------------------------------------------------------------------
+# Case 8: polyprotein product disambiguates duplicate gene names
+# ---------------------------------------------------------------------------
+def test_polyprotein_product_name_disambiguation(tmp_path):
+    """Purpose: verify that when two CDS features share the same gene= value
+    but differ in their product= qualifier (e.g. ORF1ab/ORF1a in SARS-CoV-2),
+    the more specific name from product is used for each.
+
+    Function under test: _parse_genbank_cds -- feat_name resolution using
+    product qualifier when product ends in "polyprotein".
+
+    Test input: 90-bp genome, two overlapping CDS features both with
+    gene="ORF1ab" but product="ORF1ab polyprotein" and "ORF1a polyprotein".
+
+    Expected result: two CdsFeatures named "ORF1ab" and "ORF1a" (not two
+    identical "ORF1ab" entries).
+    """
+    seq = "ATG" * 30  # 90 bp
+    features = textwrap.dedent("""\
+             CDS             1..90
+                             /gene="ORF1ab"
+                             /codon_start=1
+                             /product="ORF1ab polyprotein"
+             CDS             1..60
+                             /gene="ORF1ab"
+                             /codon_start=1
+                             /product="ORF1a polyprotein"
+    """)
+    gb = _write_gb(tmp_path, "SC2POLY", seq, features)
+
+    amplicon = seq[0:30]  # 30 bp, 10 codons, overlaps both CDS features
+    results = _parse_genbank_cds(gb, amplicon)
+
+    names = [f.name for f in results]
+    assert "ORF1ab" in names, f"Expected 'ORF1ab' in results, got: {names}"
+    assert "ORF1a" in names, f"Expected 'ORF1a' in results, got: {names}"
+    assert names.count("ORF1ab") == 1, f"Duplicate 'ORF1ab' entries: {names}"
+    assert names.count("ORF1a") == 1, f"Duplicate 'ORF1a' entries: {names}"

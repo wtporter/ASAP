@@ -81,7 +81,7 @@ def test_linked_on_same_read(tmp_bam):
         reads.append(_make_read(f"r{i}", seq, 95))
 
     samdata = tmp_bam(reads)
-    pos_table, _, _ = _build_fragment_allele_table(samdata, [100, 110])
+    pos_table, _, _, _ = _build_fragment_allele_table(samdata, [100, 110])
     result = _tally_allele_linkage(pos_table, [100, 110])
     samdata.close()
 
@@ -119,7 +119,7 @@ def test_linked_across_mates(tmp_bam):
         reads.extend([r1, r2])
 
     samdata = tmp_bam(reads)
-    pos_table, _, _ = _build_fragment_allele_table(samdata, [50, 200])
+    pos_table, _, _, _ = _build_fragment_allele_table(samdata, [50, 200])
     result = _tally_allele_linkage(pos_table, [50, 200])
     samdata.close()
 
@@ -158,7 +158,7 @@ def test_unlinked_snps(tmp_bam):
         reads.append(_make_read(f"alt{i}", seq, 95))
 
     samdata = tmp_bam(reads)
-    pos_table, _, _ = _build_fragment_allele_table(samdata, [100, 110])
+    pos_table, _, _, _ = _build_fragment_allele_table(samdata, [100, 110])
     result = _tally_allele_linkage(pos_table, [100, 110])
     samdata.close()
 
@@ -193,7 +193,7 @@ def test_reads_not_spanning_all_excluded(tmp_bam):
         reads.append(_make_read(f"short{i}", seq, 95))
 
     samdata = tmp_bam(reads)
-    pos_table, _, _ = _build_fragment_allele_table(samdata, [100, 300])
+    pos_table, _, _, _ = _build_fragment_allele_table(samdata, [100, 300])
     result = _tally_allele_linkage(pos_table, [100, 300])
     samdata.close()
 
@@ -226,7 +226,7 @@ def test_supplementary_secondary_excluded(tmp_bam):
         reads.append(_make_read(f"sec{i}", seq, 95, flag=0x100))   # secondary
 
     samdata = tmp_bam(reads)
-    pos_table, _, _ = _build_fragment_allele_table(samdata, [100, 110])
+    pos_table, _, _, _ = _build_fragment_allele_table(samdata, [100, 110])
     result = _tally_allele_linkage(pos_table, [100, 110])
     samdata.close()
 
@@ -261,7 +261,7 @@ def test_min_reads_threshold(tmp_bam):
         reads.append(_make_read(f"common{i}", seq_common, 95))
 
     samdata = tmp_bam(reads)
-    pos_table, _, _ = _build_fragment_allele_table(samdata, [100, 110])
+    pos_table, _, _, _ = _build_fragment_allele_table(samdata, [100, 110])
     result = _tally_allele_linkage(pos_table, [100, 110])
     samdata.close()
 
@@ -301,7 +301,7 @@ def test_masked_pos_table_disjoint_on_overlap(tmp_bam):
     r2 = _make_read("pair0", seq2, 90, flag=0x83)  # paired, read2
 
     samdata = tmp_bam([r1, r2])
-    pos_table, _, masked = _build_fragment_allele_table(samdata, [100])
+    pos_table, _, masked, _ = _build_fragment_allele_table(samdata, [100])
     samdata.close()
 
     assert pos_table[100].get("pair0") == "T"

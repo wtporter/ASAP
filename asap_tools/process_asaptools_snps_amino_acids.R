@@ -74,7 +74,7 @@ SNPS <- SNPS %>%
 # For "complete" codon_merge pairs, replaces both individual SNPs with one
 # combined-codon row (e.g. "T5118A|T5119A"); for "partial" pairs, adds the
 # combined row alongside the individual rows. See _expand_codon_merges.R.
-SNPS <- expand_codon_merges(SNPS)
+SNPS <- expand_codon_merges(SNPS, min_snp_perc = 0)
 
 # --- Loop Through All GenBank Files ---
 all_amino_acids <- list()

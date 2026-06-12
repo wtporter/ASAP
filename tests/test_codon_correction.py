@@ -2,17 +2,15 @@
 Unit tests for _apply_codon_correction and _add_codon_merges_node, and for
 _apply_discover_roi's exclusion of codon_merge partners from linked_snps.
 
-pos_table/reach/masked are constructed by hand (rather than via a synthetic
-BAM) since _apply_codon_correction and _apply_discover_roi only consume the
-plain {pos: {qname: base}} / {pos: (lo, hi)} / {pos: {qname, ...}} dicts
-produced by _build_fragment_allele_table.
+pos_table/reach/masked/deleted are constructed by hand (rather than via a
+synthetic BAM) since _apply_codon_correction and _apply_discover_roi only
+consume the plain {pos: {qname: base}} / {pos: (lo, hi)} / {pos: {qname, ...}}
+dicts produced by _build_fragment_allele_table.
 """
 import os
 import sys
 from collections import Counter
 from xml.etree import ElementTree
-
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from asap.newBamProcessor import (
@@ -21,21 +19,6 @@ from asap.newBamProcessor import (
     _add_codon_merges_node,
     _apply_discover_roi,
 )
-
-
-def _make_pos_table(pos_a, pos_b, combo_counts):
-    """Build a {pos_a: {qname: base}, pos_b: {qname: base}} table where
-    combo_counts maps (base_a, base_b) -> number of fragments carrying that
-    combination at (pos_a, pos_b)."""
-    pos_table = {pos_a: {}, pos_b: {}}
-    i = 0
-    for (base_a, base_b), count in combo_counts.items():
-        for _ in range(count):
-            qname = f"r{i}"
-            pos_table[pos_a][qname] = base_a
-            pos_table[pos_b][qname] = base_b
-            i += 1
-    return pos_table
 
 
 def _make_pos_table_3way(pos_a, pos_b, pos_c, rows):
@@ -54,43 +37,33 @@ def _make_pos_table_3way(pos_a, pos_b, pos_c, rows):
 
 
 def _linked_names(snp):
-    return {entry['name'] for entry in snp.get('linked_snps', [])}
+    return {entry['target_name'] for entry in snp.get('linked_snps', [])}
 
 
 # ---------------------------------------------------------------------------
-# Case 1: two-SNP codon, complete merge (mirrors the real T5118A/T5119A
-# example: variant frequencies match, so linkage=="complete").
+# Case 1: two-SNP codon, basic codon distribution.
 # ---------------------------------------------------------------------------
 def test_complete_merge_codon_annotation():
-    """Purpose: verify that a 2-SNP codon where both SNPs' variant
-    frequencies match within error_threshold gets annotated with one
-    codon_merges entry per SNP, cross-referencing each other, with
-    linkage=="complete" and combos classified as reference/variant.
+    """Purpose: verify that a 2-SNP codon gets one codon_merges entry per SNP
+    showing the full 3-bp codon distribution.
 
-    Function under test: _apply_codon_correction.
-
-    Test input: codon spanning amp positions 100/101 (offset=0 -> translated
-    101/102); pos_table with 17 fragments A|A and 3 fragments T|T
-    (spanning_depth=20); both SNPs A->T with basecalls {A:17, T:3} (freq=0.15
-    each); error_threshold=0.05, min_reads=1.
-
-    Expected result: snp_list unchanged in length; both SNPs get exactly one
-    codon_merges entry, cross-referencing linked_snp by name,
-    spanning_depth==20, linkage=="complete", combos==
-    [{"A|A",17,85.0,"reference"}, {"T|T",3,15.0,"variant"}].
-    snp_percentage_linked==15.0 (linked combo count 3 / spanning_depth 20)
-    on both entries, and total_percentage_depth_linked==15.0 (3 / depth 20)
-    on both entries.
+    Codon boundary (100,103,'AAA'): positions 100/101/102 (translated 101/102/103).
+    17 reads: A at 100, A at 101, A at 102 -> 'AAA' (reference codon).
+    3 reads: T at 100, T at 101, A at 102 -> 'TTA' (both SNPs mutated).
+    codon_depth=20; dominant call 'AAA' at 85.0%.
     """
-    pos_table = _make_pos_table(100, 101, {('A', 'A'): 17, ('T', 'T'): 3})
+    pos_table = _make_pos_table_3way(100, 101, 102, [
+        ('A', 'A', 'A', 17),
+        ('T', 'T', 'A', 3),
+    ])
     snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
              'depth': '20', 'basecalls': Counter({'A': 17, 'T': 3})}
     snp_b = {'name': 'A102T', 'position': '102', 'reference': 'A', 'variant': 'T',
              'depth': '20', 'basecalls': Counter({'A': 17, 'T': 3})}
     snp_list = [snp_a, snp_b]
-    cds = CdsFeature('ORF1', '+', [(100, 103)])
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
 
-    result = _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
+    result = _apply_codon_correction(snp_list, pos_table, {}, {}, [cds], offset=0,
                                       error_threshold=0.05, min_reads=1)
 
     assert result is None
@@ -100,143 +73,124 @@ def test_complete_merge_codon_annotation():
 
     cm_a = snp_a['codon_merges'][0]
     cm_b = snp_b['codon_merges'][0]
-    assert cm_a['linked_snp'] == 'A102T'
-    assert cm_b['linked_snp'] == 'A101T'
-    assert cm_a['spanning_depth'] == 20
-    assert cm_b['spanning_depth'] == 20
-    assert cm_a['linkage'] == 'complete'
-    assert cm_b['linkage'] == 'complete'
-    assert cm_a['combos'] == [
-        {'bases': 'A|A', 'count': 17, 'percent': 85.0, 'type': 'reference'},
-        {'bases': 'T|T', 'count': 3, 'percent': 15.0, 'type': 'variant'},
-    ]
-    assert cm_b['combos'] == cm_a['combos']
+    assert cm_a is cm_b  # same entry object shared by both SNPs
 
-    assert cm_a['snp_percentage_linked'] == 15.0
-    assert cm_b['snp_percentage_linked'] == 15.0
-    assert cm_a['total_percentage_depth_linked'] == 15.0
-    assert cm_b['total_percentage_depth_linked'] == 15.0
+    assert cm_a['name'] == 'ORF1_codon_1'
+    assert cm_a['region'] == 'ORF1'
+    assert cm_a['direction'] == 'forward'
+    assert cm_a['position'] == '101-103'
+    assert cm_a['reference'] == 'AAA'
+    assert cm_a['codon_depth'] == 20
+    assert cm_a['codon_call'] == 'AAA'
+    assert cm_a['codon_call_count'] == 17
+    assert cm_a['codon_call_percentage'] == 85.0
+    assert cm_a['codon_distribution'] == {'AAA': 17, 'TTA': 3}
+
+    # codon_partner_names set is populated for discover_roi exclusion
+    assert snp_a.get('codon_partner_names') == {'A102T'}
+    assert snp_b.get('codon_partner_names') == {'A101T'}
 
 
 def test_add_codon_merges_node_xml():
     """Purpose: verify _add_codon_merges_node serializes a codon_merges entry
-    to a <codon_merge> element with <combo> children carrying the bases,
-    count, percent and type attributes.
-
-    Function under test: _add_codon_merges_node -- pure XML serialization.
-
-    Test input: a synthetic codon_merges list with one entry
-    (linked_snp="A102T", spanning_depth=20, linkage="complete",
-    snp_percentage_linked=15.0, total_percentage_depth_linked=15.0)
-    containing two combos (a "reference" and a "variant" combo).
-
-    Expected result: the resulting <codon_merge> element has the expected
-    attributes, and its two <combo> children have the expected
-    bases/count/percent/type attributes in order.
+    to the new <codon_merge> XML format with <codon_call>, <codon_distribution>,
+    and <excluded_reads> children.
     """
     snp_node = ElementTree.Element('snp')
     codon_merges = [{
-        'linked_snp': 'A102T',
-        'spanning_depth': 20,
-        'linkage': 'complete',
-        'snp_percentage_linked': 15.0,
-        'total_percentage_depth_linked': 15.0,
-        'combos': [
-            {'bases': 'A|A', 'count': 17, 'percent': 85.0, 'type': 'reference'},
-            {'bases': 'T|T', 'count': 3, 'percent': 15.0, 'type': 'variant'},
-        ],
+        'name': 'ORF1_codon_1',
+        'region': 'ORF1',
+        'direction': 'forward',
+        'position': '101-103',
+        'codon_depth': 20,
+        'reference': 'AAA',
+        'codon_call': 'AAA',
+        'codon_call_count': 17,
+        'codon_call_percentage': 85.0,
+        'codon_distribution': {'AAA': 17, 'TTA': 3},
+        'excl_has_n': 2,
+        'excl_no_span': 5,
     }]
 
     _add_codon_merges_node(snp_node, codon_merges)
 
     cm_node = snp_node.find('codon_merge')
     assert cm_node.attrib == {
-        'linked_snp': 'A102T',
-        'spanning_depth': '20',
-        'linkage': 'complete',
-        'snp_percentage_linked': '15.0',
-        'total_percentage_depth_linked': '15.0',
+        'name': 'ORF1_codon_1',
+        'region': 'ORF1',
+        'direction': 'forward',
+        'position': '101-103',
+        'codon_depth': '20',
+        'reference': 'AAA',
     }
-    combos = cm_node.findall('combo')
-    assert len(combos) == 2
-    assert combos[0].attrib == {'bases': 'A|A', 'count': '17', 'percent': '85.0', 'type': 'reference'}
-    assert combos[1].attrib == {'bases': 'T|T', 'count': '3', 'percent': '15.0', 'type': 'variant'}
+
+    codon_call = cm_node.find('codon_call')
+    assert codon_call.text == 'AAA'
+    assert codon_call.attrib == {'codon_count': '17', 'percentage': '85.0'}
+
+    codon_dist = cm_node.find('codon_distribution')
+    # sorted by descending count: AAA=17 before TTA=3
+    assert codon_dist.attrib == {'AAA': '17', 'TTA': '3'}
+
+    excluded = cm_node.find('excluded_reads')
+    assert excluded.attrib == {'has_n': '2', 'no_span': '5'}
 
 
 # ---------------------------------------------------------------------------
-# Case 2: two-SNP codon, partial merge -- mismatched variant frequencies
-# produce linkage=="partial" and a "discordant" combo.
+# Case 2: mixed codon distribution -- multiple distinct codon sequences.
 # ---------------------------------------------------------------------------
-def test_partial_merge_codon_annotation():
-    """Purpose: verify that a 2-SNP codon where the SNPs' variant frequencies
-    differ by more than error_threshold gets linkage=="partial", and that a
-    fragment carrying only one of the two variants is classified as
-    "discordant" (not "reference" or "variant").
+def test_mixed_codon_distribution():
+    """Purpose: verify that multiple distinct codon sequences each appear as
+    separate entries in codon_distribution.
 
-    Function under test: _apply_codon_correction.
-
-    Test input: codon spanning amp positions 100/101 (translated 101/102);
-    pos_table with 10 fragments A|A (reference/reference), 5 fragments T|C
-    (both variants together), 5 fragments T|A (only the first SNP's
-    variant); s_a is A->T (basecalls {A:10, T:10}, freq=0.5), s_b is A->C
-    (basecalls {A:15, C:5}, freq=0.25); error_threshold=0.05, min_reads=1.
-
-    Expected result: both SNPs remain in snp_list unchanged; linkage==
-    "partial"; spanning_depth==20; combos include bases "A|A"->"reference",
-    "T|C"->"variant", "T|A"->"discordant".
+    Codon (100,103,'AAA'): positions 100/101/102 (translated 101/102/103).
+    10 reads: A|A|A -> 'AAA'; 5 reads: T|C|A -> 'TCA'; 5 reads: T|A|A -> 'TAA'.
     """
-    pos_table = _make_pos_table(100, 101, {
-        ('A', 'A'): 10,
-        ('T', 'C'): 5,
-        ('T', 'A'): 5,
-    })
+    pos_table = _make_pos_table_3way(100, 101, 102, [
+        ('A', 'A', 'A', 10),
+        ('T', 'C', 'A', 5),
+        ('T', 'A', 'A', 5),
+    ])
     snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
              'depth': '20', 'basecalls': Counter({'A': 10, 'T': 10})}
     snp_b = {'name': 'A102C', 'position': '102', 'reference': 'A', 'variant': 'C',
              'depth': '20', 'basecalls': Counter({'A': 15, 'C': 5})}
     snp_list = [snp_a, snp_b]
-    cds = CdsFeature('ORF1', '+', [(100, 103)])
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
 
-    _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
 
     assert len(snp_list) == 2
-    assert snp_a is snp_list[0]
-    assert snp_b is snp_list[1]
-
-    cm_a = snp_a['codon_merges'][0]
-    assert cm_a['linkage'] == 'partial'
-    assert cm_a['spanning_depth'] == 20
-
-    types = {c['bases']: c['type'] for c in cm_a['combos']}
-    assert types['A|A'] == 'reference'
-    assert types['T|C'] == 'variant'
-    assert types['T|A'] == 'discordant'
+    cm = snp_a['codon_merges'][0]
+    assert cm['codon_depth'] == 20
+    assert cm['codon_call'] == 'AAA'
+    assert cm['codon_distribution'] == {'AAA': 10, 'TCA': 5, 'TAA': 5}
 
 
 # ---------------------------------------------------------------------------
-# Case 3: duplicate CDS features with an identical codon boundary (e.g. SC2's
-# ORF1ab/ORF1a) must be processed once, not once per CDS feature.
+# Case 3: duplicate CDS features with identical boundary each produce their
+# own codon_merges entry (one per CDS, no deduplication).
 # ---------------------------------------------------------------------------
-def test_duplicate_cds_boundary_deduped():
+def test_duplicate_cds_boundary_produces_one_entry_per_cds():
     """Purpose: verify that when two CDS features (e.g. "ORF1ab" and "ORF1a")
-    share an identical codon boundary, the codon is only annotated once --
-    each SNP gets a single codon_merges entry, not one per CDS feature --
-    while a second, non-duplicated boundary is still annotated normally.
+    share an identical codon boundary, each CDS produces its own codon_merges
+    entry. SNPs at the shared boundary get 2 entries (one per CDS), while
+    SNPs at the unique ORF1ab-only boundary get 1 entry.
 
-    Function under test: _apply_codon_correction -- the all_codon_boundaries
-    dedup across cds_features.
+    cds_features = [CdsFeature("ORF1ab", [(100,103,'AAA'),(200,203,'GGG')]),
+                    CdsFeature("ORF1a",  [(100,103,'AAA')])]
 
-    Test input: two codons (amp 100/101 and amp 200/201), each a complete
-    merge as in case 1 (17 ref/ref + 3 variant/variant fragments,
-    spanning_depth=20). cds_features = [CdsFeature("ORF1ab", boundaries=
-    [(100,103), (200,203)]), CdsFeature("ORF1a", boundaries=[(100,103)])].
-
-    Expected result: every SNP ends up with len(codon_merges) == 1.
+    SNPs at translated 101/102 -> 2 entries each (ORF1ab codon 1 + ORF1a codon 1).
+    SNPs at translated 201/202 -> 1 entry each (ORF1ab codon 2 only).
     """
     pos_table = {}
-    pos_table.update(_make_pos_table(100, 101, {('A', 'A'): 17, ('T', 'T'): 3}))
-    pos_table.update(_make_pos_table(200, 201, {('G', 'G'): 17, ('C', 'C'): 3}))
+    pos_table.update(_make_pos_table_3way(100, 101, 102, [
+        ('A', 'A', 'A', 17), ('T', 'T', 'A', 3),
+    ]))
+    pos_table.update(_make_pos_table_3way(200, 201, 202, [
+        ('G', 'G', 'G', 17), ('C', 'C', 'G', 3),
+    ]))
 
     snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
              'depth': '20', 'basecalls': Counter({'A': 17, 'T': 3})}
@@ -248,16 +202,25 @@ def test_duplicate_cds_boundary_deduped():
              'depth': '20', 'basecalls': Counter({'G': 17, 'C': 3})}
     snp_list = [snp_a, snp_b, snp_c, snp_d]
 
-    cds_orf1ab = CdsFeature('ORF1ab', '+', [(100, 103), (200, 203)])
-    cds_orf1a = CdsFeature('ORF1a', '+', [(100, 103)])
+    cds_orf1ab = CdsFeature('ORF1ab', '+', [(100, 103, 'AAA'), (200, 203, 'GGG')])
+    cds_orf1a = CdsFeature('ORF1a', '+', [(100, 103, 'AAA')])
 
-    _apply_codon_correction(snp_list, pos_table, {}, [cds_orf1ab, cds_orf1a], offset=0,
-                             error_threshold=0.05, min_reads=1)
+    _apply_codon_correction(snp_list, pos_table, {}, {}, [cds_orf1ab, cds_orf1a],
+                             offset=0, error_threshold=0.05, min_reads=1)
 
-    assert len(snp_a['codon_merges']) == 1
-    assert len(snp_b['codon_merges']) == 1
+    # Shared boundary -> 2 entries each
+    assert len(snp_a['codon_merges']) == 2
+    assert len(snp_b['codon_merges']) == 2
+    assert {cm['region'] for cm in snp_a['codon_merges']} == {'ORF1ab', 'ORF1a'}
+    assert {cm['name'] for cm in snp_a['codon_merges']} == {
+        'ORF1ab_codon_1', 'ORF1a_codon_1',
+    }
+
+    # Unique boundary -> 1 entry each
     assert len(snp_c['codon_merges']) == 1
     assert len(snp_d['codon_merges']) == 1
+    assert snp_c['codon_merges'][0]['region'] == 'ORF1ab'
+    assert snp_c['codon_merges'][0]['name'] == 'ORF1ab_codon_2'
 
 
 # ---------------------------------------------------------------------------
@@ -266,21 +229,13 @@ def test_duplicate_cds_boundary_deduped():
 # ---------------------------------------------------------------------------
 def test_multi_codon_membership():
     """Purpose: verify that a SNP participating in two different qualifying
-    codons (e.g. overlapping reading frames in different ORFs) accumulates
-    one codon_merges entry per codon, each with the correct linked_snp.
+    codons (overlapping reading frames) accumulates one codon_merges entry
+    per codon, each with a distinct name and position.
 
-    Function under test: _apply_codon_correction -- multiple codon_boundaries
-    sharing a SNP position.
-
-    Test input: amp positions 100/101/102 (translated 101/102/103); codon1 =
-    (100,102) pairs translated 101/102, codon2 = (101,103) pairs translated
-    102/103. 17 fragments carry A|T|G, 3 fragments carry T|A|C across
-    positions 100/101/102. SNP at translated 102 (amp 101) is the shared
-    "middle" SNP.
-
-    Expected result: the middle SNP gets codon_merges of length 2, with
-    linked_snp values {"A101T", "G103C"}; the other two SNPs each get
-    codon_merges of length 1.
+    amp positions 100/101/102 (translated 101/102/103):
+    codon1 = (100,102,'AT') pairs translated 101/102,
+    codon2 = (101,103,'TG') pairs translated 102/103.
+    The SNP at translated 102 (amp 101) is the shared middle position.
     """
     pos_table = _make_pos_table_3way(100, 101, 102, [
         ('A', 'T', 'G', 17),
@@ -295,15 +250,17 @@ def test_multi_codon_membership():
                  'depth': '20', 'basecalls': Counter({'G': 17, 'C': 3})}
     snp_list = [snp_left, snp_mid, snp_right]
 
-    cds = CdsFeature('ORFx', '+', [(100, 102), (101, 103)])
+    cds = CdsFeature('ORFx', '+', [(100, 102, 'AT'), (101, 103, 'TG')])
 
-    _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
 
     assert len(snp_left['codon_merges']) == 1
     assert len(snp_right['codon_merges']) == 1
     assert len(snp_mid['codon_merges']) == 2
-    assert {cm['linked_snp'] for cm in snp_mid['codon_merges']} == {'A101T', 'G103C'}
+    assert {cm['name'] for cm in snp_mid['codon_merges']} == {
+        'ORFx_codon_1', 'ORFx_codon_2',
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -312,33 +269,23 @@ def test_multi_codon_membership():
 def test_noop_empty_inputs():
     """Purpose: verify _apply_codon_correction is a no-op (returns None,
     mutates nothing) when cds_features or snp_list is empty.
-
-    Function under test: _apply_codon_correction -- early-return guard.
     """
-    assert _apply_codon_correction([], {}, {}, [], offset=0,
+    assert _apply_codon_correction([], {}, {}, {}, [], offset=0,
                                     error_threshold=0.05, min_reads=1) is None
 
     snp = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
            'depth': '20', 'basecalls': Counter({'A': 17, 'T': 3})}
-    cds = CdsFeature('ORF1', '+', [(100, 103)])
-    assert _apply_codon_correction([snp], {}, {}, [], offset=0,
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
+    assert _apply_codon_correction([snp], {}, {}, {}, [], offset=0,
                                     error_threshold=0.05, min_reads=1) is None
-    assert _apply_codon_correction([snp], {}, {}, [cds], offset=0,
+    assert _apply_codon_correction([snp], {}, {}, {}, [cds], offset=0,
                                     error_threshold=0.05, min_reads=1) is None
     assert 'codon_merges' not in snp
 
 
 def test_three_snp_codon_not_annotated():
-    """Purpose: verify a codon containing three polymorphic positions is
-    left unannotated -- only len(codon_snps) == 2 codons are processed.
-
-    Function under test: _apply_codon_correction -- the
-    `if len(codon_snps) != 2: continue` guard.
-
-    Test input: codon (100,103) covers translated 101/102/103, and snp_list
-    has a SNP at each of those three positions.
-
-    Expected result: none of the three SNPs gets a 'codon_merges' key.
+    """Purpose: verify a codon containing three polymorphic positions is left
+    unannotated -- only len(codon_snps) == 2 codons are processed.
     """
     snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
              'depth': '20', 'basecalls': Counter({'A': 17, 'T': 3})}
@@ -347,9 +294,9 @@ def test_three_snp_codon_not_annotated():
     snp_c = {'name': 'A103T', 'position': '103', 'reference': 'A', 'variant': 'T',
              'depth': '20', 'basecalls': Counter({'A': 17, 'T': 3})}
     snp_list = [snp_a, snp_b, snp_c]
-    cds = CdsFeature('ORF1', '+', [(100, 103)])
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
 
-    _apply_codon_correction(snp_list, {}, {}, [cds], offset=0,
+    _apply_codon_correction(snp_list, {}, {}, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
 
     assert 'codon_merges' not in snp_a
@@ -359,27 +306,20 @@ def test_three_snp_codon_not_annotated():
 
 
 def test_min_reads_gate_skips_codon():
-    """Purpose: verify a codon is skipped entirely (no codon_merges added)
-    when the most common allele combination has fewer than min_reads
-    supporting fragments.
-
-    Function under test: _apply_codon_correction -- the
-    `if dominant_combo_count < min_reads: continue` guard.
-
-    Test input: codon (100,103) over translated 101/102; pos_table with 2
-    A|A fragments + 1 T|T fragment (dominant_combo_count=2); min_reads=5.
-
-    Expected result: neither SNP gets a 'codon_merges' key.
+    """Purpose: verify a codon is skipped when the dominant combination has
+    fewer than min_reads supporting fragments.
     """
-    pos_table = _make_pos_table(100, 101, {('A', 'A'): 2, ('T', 'T'): 1})
+    pos_table = _make_pos_table_3way(100, 101, 102, [
+        ('A', 'A', 'A', 2), ('T', 'T', 'A', 1),
+    ])
     snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
              'depth': '3', 'basecalls': Counter({'A': 2, 'T': 1})}
     snp_b = {'name': 'A102T', 'position': '102', 'reference': 'A', 'variant': 'T',
              'depth': '3', 'basecalls': Counter({'A': 2, 'T': 1})}
     snp_list = [snp_a, snp_b]
-    cds = CdsFeature('ORF1', '+', [(100, 103)])
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
 
-    _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=5)
 
     assert 'codon_merges' not in snp_a
@@ -387,36 +327,33 @@ def test_min_reads_gate_skips_codon():
 
 
 # ---------------------------------------------------------------------------
-# Case 6: pairs already covered by <codon_merge> are excluded from
-# linked_snps, while unrelated pairs still get linked_snps as usual.
+# Case 6: pairs covered by codon_merges are excluded from linked_snps.
 # ---------------------------------------------------------------------------
 def test_codon_merge_pairs_excluded_from_linked_snps():
-    """Purpose: verify that a SNP pair annotated via codon_merges (by
-    _apply_codon_correction) does NOT also show up in each other's
-    linked_snps (from _apply_discover_roi), while an unrelated SNP pair --
-    not part of any codon -- still links normally.
+    """Purpose: verify that a SNP pair annotated via codon_merges does NOT also
+    appear in each other's linked_snps, while an unrelated SNP pair still links.
 
-    Functions under test: _apply_codon_correction + _apply_discover_roi run
-    in sequence (matching the real call order), focused on the
-    `codon_partners` exclusion in _apply_discover_roi.
-
-    Test input: codon pair at amp 100/101 (translated 101/102, A->T, 17
-    ref/ref + 3 variant/variant fragments -- same as case 1, would otherwise
-    qualify for linked_snps under loose thresholds); unrelated pair at amp
-    200/201 (translated 201/202, G->C, same 17/3 split) not covered by any
-    CDS codon boundary. discover_roi called with min_perc=0.0, min_reads=1,
-    min_snp_perc=0.0.
-
-    Expected result: codon_merges populated for the amp 100/101 pair as in
-    case 1; neither SNP appears in the other's linked_snps. The amp 200/201
-    pair has no codon_merges and DOES appear in each other's linked_snps.
+    Codon pair at amp 100/101/102 (ORF1 codon 1); unrelated pair at amp
+    200/201 not covered by any CDS boundary.
     """
     pos_table = {}
-    pos_table.update(_make_pos_table(100, 101, {('A', 'A'): 17, ('T', 'T'): 3}))
-    pos_table.update(_make_pos_table(200, 201, {('G', 'G'): 17, ('C', 'C'): 3}))
+    pos_table.update(_make_pos_table_3way(100, 101, 102,
+                                          [('A', 'A', 'A', 17), ('T', 'T', 'A', 3)]))
+    # Unrelated pair at 200/201 (2-position table, no 3rd position needed for discover_roi)
+    pos_table.setdefault(200, {})
+    pos_table.setdefault(201, {})
+    for i in range(17):
+        pos_table[200][f's{i}'] = 'G'
+        pos_table[201][f's{i}'] = 'G'
+    for i in range(3):
+        pos_table[200][f'sv{i}'] = 'C'
+        pos_table[201][f'sv{i}'] = 'C'
 
-    reach = {100: (90, 150), 101: (90, 150), 200: (190, 250), 201: (190, 250)}
-    masked = {100: set(), 101: set(), 200: set(), 201: set()}
+    reach = {
+        100: (90, 150), 101: (90, 150), 102: (90, 150),
+        200: (190, 250), 201: (190, 250),
+    }
+    masked = {p: set() for p in [100, 101, 102, 200, 201]}
 
     snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
              'depth': '20', 'basecalls': Counter({'A': 17, 'T': 3})}
@@ -428,18 +365,20 @@ def test_codon_merge_pairs_excluded_from_linked_snps():
              'depth': '20', 'basecalls': Counter({'G': 17, 'C': 3})}
     snp_list = [snp_a, snp_b, snp_e, snp_f]
 
-    cds = CdsFeature('ORF1', '+', [(100, 103)])
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
 
-    _apply_codon_correction(snp_list, pos_table, {}, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, {}, masked, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
     _apply_discover_roi(snp_list, pos_table, reach, masked, offset=0,
                          min_perc=0.0, min_reads=1, min_snp_perc=0.0)
 
-    assert snp_a['codon_merges'][0]['linked_snp'] == 'A102T'
-    assert snp_b['codon_merges'][0]['linked_snp'] == 'A101T'
+    # codon pair has codon_merges; neither appears in the other's linked_snps
+    assert 'codon_merges' in snp_a
+    assert 'codon_merges' in snp_b
     assert 'A102T' not in _linked_names(snp_a)
     assert 'A101T' not in _linked_names(snp_b)
 
+    # unrelated pair has no codon_merges and appears in linked_snps
     assert 'codon_merges' not in snp_e
     assert 'codon_merges' not in snp_f
     assert 'G202C' in _linked_names(snp_e)
@@ -447,51 +386,108 @@ def test_codon_merge_pairs_excluded_from_linked_snps():
 
 
 # ---------------------------------------------------------------------------
-# Case 7: deletion-pair codon -- both SNPs' variants are '_' (e.g. a 2-bp
-# deletion like SC2 Spike Δ22029-22030).  pos_table cannot represent '_|_'
-# (get_aligned_pairs(matches_only=True) drops deleted positions), so
-# both_deleted from the `deleted` table is the only source of linked count.
+# Case 7: full-codon deletion (all 3 positions deleted) appears in distribution.
 # ---------------------------------------------------------------------------
-def test_deletion_pair_codon_annotation():
-    """Purpose: verify that a 2-SNP codon where both variants are deletions
-    ('_') correctly uses the `deleted` table to compute snp_percentage_linked
-    and total_percentage_depth_linked, since pos_table can never represent a
-    '_|_' combo.
+def test_full_codon_deletion_in_distribution():
+    """Purpose: verify that reads with deletions at all 3 codon positions
+    appear as '___' in codon_distribution and contribute to codon_depth.
 
-    Function under test: _apply_codon_correction.
-
-    Test input: codon spanning amp positions 100/101 (translated 101/102);
-    pos_table with 5 reference A|A fragments (spanning_depth=5);
-    deleted = {100: {'d0','d1','d2','d3'}, 101: {'d1','d2','d3','d4'}}
-    -- 3 reads are deleted at BOTH positions (d1, d2, d3); snp_a depth=8
-    (3 deleted + 5 ref calls), snp_b depth=9 (4 deleted + 5 ref calls);
-    both SNPs' variant is '_'.
-
-    Expected result: combos = [{'A|A', 5, 100.0, 'reference'}] (no variant
-    or discordant combo since pos_table has no deletions); both_deleted=3;
-    total_valid = 5+3=8; snp_percentage_linked = 3/8*100=37.5;
-    total_percentage_depth_linked_a = 3/8*100=37.5;
-    total_percentage_depth_linked_b = 3/9*100=33.3.
+    5 reads with reference A|A|A; 3 reads with deletion at all 3 positions.
+    deleted = {100: {'d0','d1','d2'}, 101: {'d0','d1','d2'}, 102: {'d0','d1','d2'}}.
+    codon_depth = 8; '___' count = 3.
     """
-    pos_table = _make_pos_table(100, 101, {('A', 'A'): 5})
-    deleted = {100: {'d0', 'd1', 'd2', 'd3'}, 101: {'d1', 'd2', 'd3', 'd4'}}
+    pos_table = _make_pos_table_3way(100, 101, 102, [('A', 'A', 'A', 5)])
+    deleted = {
+        100: {'d0', 'd1', 'd2'},
+        101: {'d0', 'd1', 'd2'},
+        102: {'d0', 'd1', 'd2'},
+    }
 
     snp_a = {'name': 'A101_', 'position': '101', 'reference': 'A', 'variant': '_',
              'depth': '8', 'basecalls': Counter({'_': 3, 'A': 5})}
     snp_b = {'name': 'A102_', 'position': '102', 'reference': 'A', 'variant': '_',
-             'depth': '9', 'basecalls': Counter({'_': 4, 'A': 5})}
+             'depth': '8', 'basecalls': Counter({'_': 3, 'A': 5})}
     snp_list = [snp_a, snp_b]
-    cds = CdsFeature('ORF1', '+', [(100, 103)])
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
 
-    _apply_codon_correction(snp_list, pos_table, deleted, [cds], offset=0,
+    _apply_codon_correction(snp_list, pos_table, deleted, {}, [cds], offset=0,
                              error_threshold=0.05, min_reads=1)
 
     assert len(snp_a['codon_merges']) == 1
-    cm_a = snp_a['codon_merges'][0]
-    cm_b = snp_b['codon_merges'][0]
+    cm = snp_a['codon_merges'][0]
+    assert cm['codon_depth'] == 8
+    assert cm['codon_distribution'] == {'AAA': 5, '___': 3}
+    assert cm['codon_call'] == 'AAA'
+    assert cm['codon_call_count'] == 5
 
-    assert cm_a['combos'] == [{'bases': 'A|A', 'count': 5, 'percent': 100.0, 'type': 'reference'}]
-    assert cm_a['snp_percentage_linked'] == pytest.approx(37.5)
-    assert cm_b['snp_percentage_linked'] == pytest.approx(37.5)
-    assert cm_a['total_percentage_depth_linked'] == pytest.approx(37.5)
-    assert cm_b['total_percentage_depth_linked'] == pytest.approx(100 * 3 / 9)
+
+# ---------------------------------------------------------------------------
+# Case 8: partial deletion (1-2 positions deleted) appears in distribution.
+# ---------------------------------------------------------------------------
+def test_partial_deletion_in_codon_distribution():
+    """Purpose: verify that a read with a deletion at one codon position and
+    real bases at the other two appears in codon_distribution as a mixed
+    sequence like '_AA'.
+
+    10 reads A|A|A; 3 reads deleted at position 100, reference at 101/102.
+    deleted = {100: {'pd0','pd1','pd2'}}.
+    Expected codon_distribution: {'AAA': 10, '_AA': 3}.
+    """
+    pos_table = _make_pos_table_3way(100, 101, 102, [('A', 'A', 'A', 10)])
+    # 3 reads: deleted at 100, A at 101, A at 102
+    for i in range(3):
+        qname = f'pd{i}'
+        pos_table[101][qname] = 'A'
+        pos_table[102][qname] = 'A'
+    deleted = {100: {'pd0', 'pd1', 'pd2'}}
+
+    snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
+             'depth': '13', 'basecalls': Counter({'A': 13})}
+    snp_b = {'name': 'A102T', 'position': '102', 'reference': 'A', 'variant': 'T',
+             'depth': '13', 'basecalls': Counter({'A': 13})}
+    snp_list = [snp_a, snp_b]
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
+
+    _apply_codon_correction(snp_list, pos_table, deleted, {}, [cds], offset=0,
+                             error_threshold=0.05, min_reads=1)
+
+    cm = snp_a['codon_merges'][0]
+    assert cm['codon_depth'] == 13
+    assert cm['codon_distribution'] == {'AAA': 10, '_AA': 3}
+
+
+# ---------------------------------------------------------------------------
+# Case 9: excluded_reads counts are reported correctly.
+# ---------------------------------------------------------------------------
+def test_excluded_reads_counts():
+    """Purpose: verify excl_has_n and excl_no_span are correct.
+
+    10 reads span all 3 positions (included in codon_depth).
+    2 reads have N at position 101 (in masked[101]) -> excl_has_n >= 2.
+    3 reads are present at position 100 only, not at 101/102 (short reads)
+       -> they appear in any_definite but not in tally -> excl_no_span >= 3.
+    """
+    pos_table = _make_pos_table_3way(100, 101, 102, [
+        ('A', 'A', 'A', 7),
+        ('T', 'T', 'A', 3),
+    ])
+    # 3 short reads at position 100 only
+    for i in range(3):
+        pos_table[100][f'short{i}'] = 'A'
+
+    masked = {101: {'n0', 'n1'}}  # 2 reads have N at position 101
+
+    snp_a = {'name': 'A101T', 'position': '101', 'reference': 'A', 'variant': 'T',
+             'depth': '15', 'basecalls': Counter({'A': 12, 'T': 3})}
+    snp_b = {'name': 'A102T', 'position': '102', 'reference': 'A', 'variant': 'T',
+             'depth': '13', 'basecalls': Counter({'A': 10, 'T': 3})}
+    snp_list = [snp_a, snp_b]
+    cds = CdsFeature('ORF1', '+', [(100, 103, 'AAA')])
+
+    _apply_codon_correction(snp_list, pos_table, {}, masked, [cds], offset=0,
+                             error_threshold=0.05, min_reads=1)
+
+    cm = snp_a['codon_merges'][0]
+    assert cm['codon_depth'] == 10
+    assert cm['excl_has_n'] == 2     # 2 reads with N at position 101
+    assert cm['excl_no_span'] == 3   # 3 short reads present only at position 100

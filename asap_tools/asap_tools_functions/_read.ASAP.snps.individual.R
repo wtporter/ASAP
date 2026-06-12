@@ -61,39 +61,30 @@ read.ASAP.snps.individual <- function(XML) {
 
           CodonMerge_Nodes <- xml_find_all(SNP_Node, "codon_merge")
           if (length(CodonMerge_Nodes) > 0) {
-            cm_linked_snp     <- xml_attr(CodonMerge_Nodes, "linked_snp")
-            cm_linkage        <- xml_attr(CodonMerge_Nodes, "linkage")
-            cm_spanning_depth <- xml_attr(CodonMerge_Nodes, "spanning_depth")
-
-            cm_variant_bases   <- character(length(CodonMerge_Nodes))
-            cm_variant_count   <- character(length(CodonMerge_Nodes))
-            cm_variant_percent <- character(length(CodonMerge_Nodes))
+            cm_distributions <- character(length(CodonMerge_Nodes))
             for (m in seq_along(CodonMerge_Nodes)) {
-              Variant_Combo <- xml_find_first(CodonMerge_Nodes[[m]], "combo[@type='variant']")
-              if (!inherits(Variant_Combo, "xml_missing")) {
-                cm_variant_bases[m]   <- xml_attr(Variant_Combo, "bases")
-                cm_variant_count[m]   <- xml_attr(Variant_Combo, "count")
-                cm_variant_percent[m] <- xml_attr(Variant_Combo, "percent")
+              dist_node <- xml_find_first(CodonMerge_Nodes[[m]], "codon_distribution")
+              if (!inherits(dist_node, "xml_missing")) {
+                attrs <- xml_attrs(dist_node)
+                cm_distributions[m] <- paste(names(attrs), attrs, sep = "=", collapse = ",")
               } else {
-                cm_variant_bases[m]   <- ""
-                cm_variant_count[m]   <- ""
-                cm_variant_percent[m] <- ""
+                cm_distributions[m] <- ""
               }
             }
 
-            codon_merge_linked_snp      <- paste(cm_linked_snp, collapse = ";")
-            codon_merge_linkage         <- paste(cm_linkage, collapse = ";")
-            codon_merge_spanning_depth  <- paste(cm_spanning_depth, collapse = ";")
-            codon_merge_variant_bases   <- paste(cm_variant_bases, collapse = ";")
-            codon_merge_variant_count   <- paste(cm_variant_count, collapse = ";")
-            codon_merge_variant_percent <- paste(cm_variant_percent, collapse = ";")
+            codon_merge_name         <- paste(xml_attr(CodonMerge_Nodes, "name"),      collapse = ";")
+            codon_merge_region       <- paste(xml_attr(CodonMerge_Nodes, "region"),    collapse = ";")
+            codon_merge_position     <- paste(xml_attr(CodonMerge_Nodes, "position"),  collapse = ";")
+            codon_merge_codon_depth  <- paste(xml_attr(CodonMerge_Nodes, "codon_depth"), collapse = ";")
+            codon_merge_reference    <- paste(xml_attr(CodonMerge_Nodes, "reference"), collapse = ";")
+            codon_merge_distribution <- paste(cm_distributions, collapse = ";")
           } else {
-            codon_merge_linked_snp      <- NA_character_
-            codon_merge_linkage         <- NA_character_
-            codon_merge_spanning_depth  <- NA_character_
-            codon_merge_variant_bases   <- NA_character_
-            codon_merge_variant_count   <- NA_character_
-            codon_merge_variant_percent <- NA_character_
+            codon_merge_name         <- NA_character_
+            codon_merge_region       <- NA_character_
+            codon_merge_position     <- NA_character_
+            codon_merge_codon_depth  <- NA_character_
+            codon_merge_reference    <- NA_character_
+            codon_merge_distribution <- NA_character_
           }
 
           SNP_Info <- data.frame(
@@ -105,12 +96,12 @@ read.ASAP.snps.individual <- function(XML) {
             snp_proportion   = snp_proportion,
             snp_call         = snp_call,
             snp_distribution = SNP_Dist,
-            codon_merge_linked_snp      = codon_merge_linked_snp,
-            codon_merge_linkage         = codon_merge_linkage,
-            codon_merge_spanning_depth  = codon_merge_spanning_depth,
-            codon_merge_variant_bases   = codon_merge_variant_bases,
-            codon_merge_variant_count   = codon_merge_variant_count,
-            codon_merge_variant_percent = codon_merge_variant_percent
+            codon_merge_name         = codon_merge_name,
+            codon_merge_region       = codon_merge_region,
+            codon_merge_position     = codon_merge_position,
+            codon_merge_codon_depth  = codon_merge_codon_depth,
+            codon_merge_reference    = codon_merge_reference,
+            codon_merge_distribution = codon_merge_distribution
           )
 
           Temp <- cbind(Run_Info, Sample_Info, Assay_Info, Amplicon_Info, SNP_Info)

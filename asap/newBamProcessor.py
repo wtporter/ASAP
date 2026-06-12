@@ -440,9 +440,16 @@ def _parse_genbank_cds(gb_files, amplicon_sequence):
                 continue
 
             for feature in gb_seq.interval_metadata.query(metadata={'type': 'CDS'}):
-                feat_name = (feature.metadata.get('gene') or
-                             feature.metadata.get('locus_tag') or
-                             'unknown').strip('"')
+                gene = (feature.metadata.get('gene') or '').strip('"')
+                product = (feature.metadata.get('product') or '').strip('"')
+                locus_tag = (feature.metadata.get('locus_tag') or '').strip('"')
+                # When product ends in "polyprotein" it carries a more specific
+                # gene symbol than the parent `gene` qualifier (e.g. "ORF1a"
+                # vs the parent "ORF1ab" that covers both ORF1a and ORF1ab).
+                if product.lower().endswith('polyprotein'):
+                    feat_name = product[:-len('polyprotein')].strip() or gene or locus_tag or 'unknown'
+                else:
+                    feat_name = gene or locus_tag or 'unknown'
 
                 # skbio stores strand as int: 1 (forward) or -1 (reverse)
                 raw_strand = feature.metadata.get('strand', 1)
@@ -486,7 +493,13 @@ def _parse_genbank_cds(gb_files, amplicon_sequence):
                         break
                     amp_positions = [_genome_to_amp(cds_genome_positions[ci])
                                      for ci in triplet_cds]
-                    codon_boundaries.append((min(amp_positions), max(amp_positions) + 1))
+                    if feat_strand == '+':
+                        ref_seq = ''.join(amp_seq[p] for p in sorted(amp_positions))
+                    else:
+                        ref_seq = str(DNA(
+                            ''.join(amp_seq[p] for p in sorted(amp_positions))
+                        ).reverse_complement())
+                    codon_boundaries.append((min(amp_positions), max(amp_positions) + 1, ref_seq))
 
                 if codon_boundaries:
                     results.append(CdsFeature(
@@ -619,6 +632,43 @@ def _tally_allele_linkage(pos_table, positions):
     return tally
 
 
+def _tally_codon_linkage(pos_table, deleted, positions):
+    """
+    Like _tally_allele_linkage but combines real base calls (pos_table) and
+    deletion events (deleted) so that partial and full codon deletions are
+    included in the tally. A read is counted only if it has a definite call
+    — real base OR deletion — at EVERY requested position.
+
+    Returns a Counter mapping frozenset{(pos, base_or_'_'), ...} -> count.
+    Reads absent from both pos_table and deleted at any position are excluded
+    (either masked/N or short read that doesn't reach that position).
+    """
+    combined = {}
+    for p in positions:
+        combined[p] = {}
+        for qname, base in pos_table.get(p, {}).items():
+            combined[p][qname] = base
+        for qname in deleted.get(p, set()):
+            combined[p][qname] = '_'
+
+    if not all(combined[p] for p in positions):
+        return Counter()
+
+    smallest = min(positions, key=lambda p: len(combined[p]))
+    others = [(p, combined[p]) for p in positions if p != smallest]
+
+    tally = Counter()
+    for qname, base in combined[smallest].items():
+        alleles = {smallest: base}
+        for p, t in others:
+            if qname not in t:
+                break
+            alleles[p] = t[qname]
+        else:
+            tally[frozenset(alleles.items())] += 1
+    return tally
+
+
 def _amp_to_translated(amp_pos, offset):
     """Convert 0-based amplicon-local position to gene-relative (translated) position."""
     if offset < 0 and (amp_pos + 1) >= abs(offset):
@@ -643,153 +693,111 @@ def _snp_variant_freq(snp):
     return count / depth, count
 
 
-def _apply_codon_correction(snp_list, pos_table, deleted, cds_features, offset, error_threshold, min_reads):
+def _apply_codon_correction(snp_list, pos_table, deleted, masked, cds_features, offset, error_threshold, min_reads):
     """
     Annotate pairs of SNPs that fall in the same codon (per GenBank CDS
-    features) with read-level allele-linkage information.
+    features) with full 3-bp codon-level read counts.
 
-    For each codon containing exactly two polymorphic positions (codons with
-    three or more polymorphic positions are left unannotated), each SNP is
-    annotated with a 'codon_merges' list entry describing how its variant
-    allele co-occurs on the same DNA fragments with the other SNP's allele.
-    Both SNP entries are kept unchanged in snp_list -- nothing is merged,
-    replaced, or removed.
+    For each codon containing exactly two polymorphic positions, both SNPs are
+    annotated with a 'codon_merges' entry describing the observed codon
+    distribution across all reads that fully span (or fully delete) all 3
+    positions. Each CDS annotation produces its own entry even if two CDS
+    features share identical codon boundaries (e.g. ORF1ab + ORF1a).
 
     Each codon_merges entry has:
-        linked_snp      - name of the other SNP in the codon
-        spanning_depth  - total fragments with confident calls at both positions
-        linkage         - "complete" if abs(freq_a - freq_b) <= error_threshold,
-                          else "partial" (carried over from the old
-                          complete-merge / codon_link distinction)
-        snp_percentage_linked        - linked_count / (spanning_depth +
-                                        both_deleted) * 100.  Of all reads
-                                        with a definite allele-pair
-                                        determination at both positions (either
-                                        both called bases, or both deleted),
-                                        the percentage showing the linked
-                                        variant pair.  Same value on both
-                                        SNPs' entries for a pair.
-        total_percentage_depth_linked - linked_count / this SNP's own depth
-                                        * 100.  Can differ slightly between
-                                        the two SNPs in a pair.
-        combos          - list of {bases, count, percent, type}, one per
-                          observed allele combination (from
-                          _tally_allele_linkage), ordered by descending count.
-                          'bases' is "X|Y" with X/Y in ascending-translated-
-                          position order, so both SNPs in a pair report
-                          combos in the same order. 'type' classifies the
-                          combo as "reference" (matches both SNPs'
-                          reference alleles), "variant" (matches both SNPs'
-                          called variant alleles), or "discordant" (anything
-                          else, e.g. a fragment carrying only one of the two
-                          variants).
-                          linked_count = count of the "variant" combo from
-                          tally + both_deleted (fragments with a deletion at
-                          BOTH positions, from the `deleted` table).  Exactly
-                          one of these is non-zero per pair: tally can never
-                          yield a '_|_' combo (deleted positions have no
-                          callable base in pos_table), so deletion-variant
-                          pairs use both_deleted exclusively.
+        name                 - "{cds_name}_codon_{N}" (1-based codon index)
+        region               - CDS gene name
+        direction            - "forward" or "reverse"
+        position             - "start-end" in translated (gene-relative) coords
+        codon_depth          - reads with a definite call (base OR deletion)
+                               at all 3 codon positions
+        reference            - 3-bp reference sequence (reading-direction order)
+        codon_call           - dominant observed 3-bp sequence
+        codon_call_count     - count of the dominant codon
+        codon_call_percentage - dominant_count / codon_depth * 100
+        codon_distribution   - dict mapping every observed 3-bp sequence
+                               (using '_' for per-position deletions) to its
+                               read count, sorted by descending count
+        excl_has_n           - reads with N at ≥1 codon position (masked)
+        excl_no_span         - reads present at ≥1 position but absent from
+                               ≥1 other position (short / soft-clipped)
 
-    A SNP can accumulate multiple codon_merges entries if it participates in
-    more than one qualifying codon (e.g. overlapping CDS features in
-    different reading frames).
-
-    min_reads gates whether a codon is annotated at all: if the most common
-    allele combination spanning both positions has fewer than min_reads
-    supporting fragments, the codon is skipped.
-
-    GenBank annotation sets (e.g. SARS-CoV-2 ORF1ab + ORF1a) can contain
-    multiple CDS features whose codon_boundaries describe the SAME reading
-    frame over an overlapping region; codon boundary tuples are deduplicated
-    across all cds_features before processing so each distinct (start, end)
-    codon is handled once.
-
-    Mutates snp_list entries in place. Returns None.
+    Codons with fewer than min_reads supporting the dominant combination are
+    skipped. Mutates snp_list entries in place. Returns None.
     """
     if not cds_features or not snp_list:
         return
 
     snp_by_trans = {int(s['position']): s for s in snp_list}
 
-    all_codon_boundaries = {
-        boundary
-        for cds in cds_features
-        for boundary in cds.codon_boundaries
-    }
+    for cds in cds_features:
+        direction = 'forward' if cds.strand == '+' else 'reverse'
+        for codon_idx, (codon_amp_start, codon_amp_end, ref_seq) in enumerate(cds.codon_boundaries):
+            codon_num = codon_idx + 1
+            codon_amp_positions = list(range(codon_amp_start, codon_amp_end))
 
-    for codon_amp_start, codon_amp_end in all_codon_boundaries:
-        codon_trans = {_amp_to_translated(p, offset)
-                      for p in range(codon_amp_start, codon_amp_end)}
-        codon_snps = [snp_by_trans[tp] for tp in codon_trans if tp in snp_by_trans]
-        if len(codon_snps) != 2:
-            continue
+            codon_trans = {_amp_to_translated(p, offset) for p in codon_amp_positions}
+            codon_snps = [snp_by_trans[tp] for tp in codon_trans if tp in snp_by_trans]
+            if len(codon_snps) != 2:
+                continue
+            codon_snps.sort(key=lambda s: int(s['position']))
 
-        codon_snps.sort(key=lambda s: int(s['position']))
-        s_a, s_b = codon_snps
+            tally = _tally_codon_linkage(pos_table, deleted, codon_amp_positions)
+            if not tally:
+                continue
 
-        amp_a = _translated_to_amp(int(s_a['position']), offset)
-        amp_b = _translated_to_amp(int(s_b['position']), offset)
-        tally = _tally_allele_linkage(pos_table, [amp_a, amp_b])
-        if not tally:
-            continue
+            dominant_combo_count = max(tally.values())
+            if dominant_combo_count < min_reads:
+                continue
 
-        spanning_depth = sum(tally.values())
-        dominant_combo_count = max(tally.values())
-        if dominant_combo_count < min_reads:
-            continue
+            codon_depth = sum(tally.values())
 
-        freq_a, _ = _snp_variant_freq(s_a)
-        freq_b, _ = _snp_variant_freq(s_b)
-        linkage = "complete" if abs(freq_a - freq_b) <= error_threshold else "partial"
+            codon_distribution = Counter()
+            for combo, count in tally.items():
+                allele_by_amp = dict(combo)
+                codon_seq = ''.join(allele_by_amp[p] for p in codon_amp_positions)
+                codon_distribution[codon_seq] += count
 
-        ref_pair = (s_a['reference'], s_b['reference'])
-        var_pair = (s_a['variant'], s_b['variant'])
+            dominant_seq = max(codon_distribution, key=lambda k: (codon_distribution[k], k))
+            dominant_count = codon_distribution[dominant_seq]
+            dominant_pct = round(dominant_count / max(codon_depth, 1) * 100, 1)
 
-        combos = []
-        for combo, count in tally.items():
-            allele_by_amp = dict(combo)
-            base_a, base_b = allele_by_amp[amp_a], allele_by_amp[amp_b]
-            if (base_a, base_b) == ref_pair:
-                combo_type = "reference"
-            elif (base_a, base_b) == var_pair:
-                combo_type = "variant"
-            else:
-                combo_type = "discordant"
-            combos.append({
-                'bases': f"{base_a}|{base_b}",
-                'count': count,
-                'percent': count / spanning_depth * 100,
-                'type': combo_type,
-            })
-        combos.sort(key=lambda c: (-c['count'], c['bases']))
+            # Exclusion counts
+            any_definite = set().union(
+                *[set(pos_table.get(p, {})) | deleted.get(p, set())
+                  for p in codon_amp_positions]
+            )
+            excl_has_n = set().union(
+                *[masked.get(p, set()) for p in codon_amp_positions]
+            )
+            excl_no_span_count = len(any_definite) - codon_depth
+            excl_has_n_count = len(excl_has_n)
 
-        linked_combo_count = next((c['count'] for c in combos if c['type'] == 'variant'), 0)
-        both_deleted = len(deleted.get(amp_a, set()) & deleted.get(amp_b, set()))
-        linked_count = linked_combo_count + both_deleted
-        total_valid = spanning_depth + both_deleted
-        snp_percentage_linked = linked_count / max(total_valid, 1) * 100
-        depth_a = int(s_a.get('depth', 0))
-        depth_b = int(s_b.get('depth', 0))
-        total_pct_depth_linked_a = linked_count / max(depth_a, 1) * 100
-        total_pct_depth_linked_b = linked_count / max(depth_b, 1) * 100
+            pos_lo = _amp_to_translated(codon_amp_start, offset)
+            pos_hi = _amp_to_translated(codon_amp_end - 1, offset)
+            position_str = f"{min(pos_lo, pos_hi)}-{max(pos_lo, pos_hi)}"
 
-        s_a.setdefault('codon_merges', []).append({
-            'linked_snp': s_b['name'],
-            'spanning_depth': spanning_depth,
-            'linkage': linkage,
-            'snp_percentage_linked': snp_percentage_linked,
-            'total_percentage_depth_linked': total_pct_depth_linked_a,
-            'combos': combos,
-        })
-        s_b.setdefault('codon_merges', []).append({
-            'linked_snp': s_a['name'],
-            'spanning_depth': spanning_depth,
-            'linkage': linkage,
-            'snp_percentage_linked': snp_percentage_linked,
-            'total_percentage_depth_linked': total_pct_depth_linked_b,
-            'combos': combos,
-        })
+            entry = {
+                'name': f"{cds.name}_codon_{codon_num}",
+                'region': cds.name,
+                'direction': direction,
+                'position': position_str,
+                'codon_depth': codon_depth,
+                'reference': ref_seq,
+                'codon_call': dominant_seq,
+                'codon_call_count': dominant_count,
+                'codon_call_percentage': dominant_pct,
+                'codon_distribution': dict(codon_distribution),
+                'excl_has_n': excl_has_n_count,
+                'excl_no_span': excl_no_span_count,
+            }
+            partner_names = {s['name'] for s in codon_snps}
+            for snp in codon_snps:
+                snp.setdefault('codon_merges', []).append(entry)
+                # Track partner names separately for _apply_discover_roi exclusion
+                snp.setdefault('codon_partner_names', set()).update(
+                    partner_names - {snp['name']}
+                )
 
 
 def _apply_discover_roi(snp_list, pos_table, reach, masked, offset, min_perc, min_reads, min_snp_perc):
@@ -814,19 +822,18 @@ def _apply_discover_roi(snp_list, pos_table, reach, masked, offset, min_perc, mi
     _build_fragment_allele_table).
 
     Each entry in 'linked_snps' is a dict with:
-        name, ref_pos_allele, linked_pct, linked_count,
-        standalone_pct, standalone_count, masked_pct, masked_count,
-        nonoverlap_pct, nonoverlap_count, percentage_linked,
-        comparable_count, spanning_depth, snp_depth
+        target_name, shared_read_depth, co_count,
+        linkage_pct, sample_frequency_pct,
+        both_variants, anchor_only, target_only,
+        neither_variant, masked, read_too_short
 
-    `linked_pct` (== "snp_percentage_linked" in the XML) is linked_count /
-    count_a -- of ALL of s_a's variant-supporting reads, the percentage also
-    carrying s_b's variant. `percentage_linked` is linked_count /
-    comparable_count -- of s_a's variant-supporting reads with a confident
-    call at s_b's position (comparable_count = linked_count +
-    standalone_count), the percentage carrying s_b's variant.
-    `spanning_depth` is broader still: the total reads with confident calls
-    at both positions regardless of allele at s_a's position.
+    `linkage_pct` is co_count / (co_count + anchor_only) -- of reads
+    carrying s_a's variant that confidently reach s_b, the percentage also
+    carrying s_b's variant. `sample_frequency_pct` is co_count /
+    shared_read_depth -- of all reads spanning both positions (any allele),
+    the percentage carrying both variants simultaneously.
+    `shared_read_depth` counts all reads with confident calls at both
+    positions regardless of allele.
 
     `min_snp_perc` is a pre-filter on `callable_snps`: a SNP's own variant
     frequency must be >= this value to be considered at all, whether as an
@@ -867,7 +874,7 @@ def _apply_discover_roi(snp_list, pos_table, reach, masked, offset, min_perc, mi
         # count how many of them are masked ('N') at amp_b.
         qnames_a = {q for q, b in pos_table.get(amp_a, {}).items() if b == var_a}
 
-        codon_partners = {cm['linked_snp'] for cm in s_a.get('codon_merges', [])}
+        codon_partners = s_a.get('codon_partner_names', set())
 
         for j, s_b in enumerate(callable_snps):
             if i == j:
@@ -892,85 +899,93 @@ def _apply_discover_roi(snp_list, pos_table, reach, masked, offset, min_perc, mi
             if linked_pct / 100 < min_perc:
                 continue
 
-            spanning_depth = sum(tally.values())
-            standalone_count = sum(
+            shared_read_depth = sum(tally.values())
+            anchor_only = sum(
                 v for combo, v in tally.items()
-                if combo != linked_combo and (amp_a, var_a) in combo
+                if (amp_a, var_a) in combo and (amp_b, var_b) not in combo
             )
+            target_only = sum(
+                v for combo, v in tally.items()
+                if (amp_b, var_b) in combo and (amp_a, var_a) not in combo
+            )
+            neither_variant = shared_read_depth - linked_count - anchor_only - target_only
             masked_count = len(qnames_a & masked.get(amp_b, set()))
-            nonoverlap_count = max(count_a - linked_count - standalone_count - masked_count, 0)
+            read_too_short = max(count_a - linked_count - anchor_only - masked_count, 0)
 
-            standalone_pct = standalone_count / max(count_a, 1) * 100
-            masked_pct = masked_count / max(count_a, 1) * 100
-            nonoverlap_pct = nonoverlap_count / max(count_a, 1) * 100
+            # linkage_pct: of anchor-variant reads that confidently reach
+            # the target position, what fraction also carry the target variant
+            confident_count = linked_count + anchor_only
+            linkage_pct = round(linked_count / max(confident_count, 1) * 100, 1)
 
-            # Of s_a's reads with a confident call at s_b's position (i.e.
-            # excluding non-overlapping and masked reads), the percentage
-            # that carry s_b's linked allele. A perfect link is 100%
-            # regardless of how many reads don't overlap or are masked.
-            confident_count = linked_count + standalone_count
-            percentage_linked = linked_count / max(confident_count, 1) * 100
+            # sample_frequency_pct: frequency of the co-occurrence across
+            # all reads that span both positions (any allele)
+            sample_frequency_pct = round(linked_count / max(shared_read_depth, 1) * 100, 1)
 
             linked.append({
-                'name': s_b['name'],
-                'ref_pos_allele': f"{s_b['reference']}{s_b['position']}",
-                'linked_pct': round(linked_pct, 1),
-                'linked_count': linked_count,
-                'standalone_pct': round(standalone_pct, 1),
-                'standalone_count': standalone_count,
-                'masked_pct': round(masked_pct, 1),
-                'masked_count': masked_count,
-                'nonoverlap_pct': round(nonoverlap_pct, 1),
-                'nonoverlap_count': nonoverlap_count,
-                'percentage_linked': round(percentage_linked, 1),
-                'comparable_count': confident_count,
-                'spanning_depth': spanning_depth,
-                'snp_depth': int(s_a.get('depth', 0)),
+                'target_name': s_b['name'],
+                'shared_read_depth': shared_read_depth,
+                'co_count': linked_count,
+                'linkage_pct': linkage_pct,
+                'sample_frequency_pct': sample_frequency_pct,
+                'both_variants': linked_count,
+                'anchor_only': anchor_only,
+                'target_only': target_only,
+                'neither_variant': neither_variant,
+                'masked': masked_count,
+                'read_too_short': read_too_short,
             })
 
         if linked:
             s_a['linked_snps'] = linked
 
 
-def _add_linked_snps_node(snp_node, linked_snps):
+def _add_linked_snps_node(snp_node, linked_snps, anchor_name):
     """Add a <linked_snps> sub-element to a SNP XML node."""
     ls_node = ElementTree.SubElement(snp_node, 'linked_snps')
     for entry in linked_snps:
         link_node = ElementTree.SubElement(ls_node, 'linked_snp', {
-            'name': entry['name'],
-            'ref_pos': entry['ref_pos_allele'],
-            'spanning_depth': str(entry['spanning_depth']),
-            'linked_depth': str(entry['linked_count']),
-            'comparable_depth': str(entry['comparable_count']),
-            'percentage_linked': str(entry['percentage_linked']),
-            'snp_percentage_linked': str(entry['linked_pct']),
+            'anchor_variant': anchor_name,
+            'target_variant': entry['target_name'],
+            'shared_read_depth': str(entry['shared_read_depth']),
+            'co_occurring_count': str(entry['co_count']),
+            'linkage_pct': str(entry['linkage_pct']),
+            'sample_frequency_pct': str(entry['sample_frequency_pct']),
         })
-        full_dist_node = ElementTree.SubElement(link_node, 'full_distribution')
-        full_dist_node.text = (
-            f"linked {entry['linked_pct']}% (N={entry['linked_count']}), "
-            f"standalone {entry['standalone_pct']}% (N={entry['standalone_count']}), "
-            f"masked {entry['masked_pct']}% (N={entry['masked_count']}), "
-            f"non-overlapping {entry['nonoverlap_pct']}% (N={entry['nonoverlap_count']})"
-        )
+        ElementTree.SubElement(link_node, 'read_evidence', {
+            'both_variants': str(entry['both_variants']),
+            'anchor_only': str(entry['anchor_only']),
+            'target_only': str(entry['target_only']),
+            'neither_variant': str(entry['neither_variant']),
+            'masked': str(entry['masked']),
+            'read_too_short': str(entry['read_too_short']),
+        })
 
 
 def _add_codon_merges_node(snp_node, codon_merges):
     """Add one <codon_merge> child element per entry in codon_merges."""
     for entry in codon_merges:
         cm_node = ElementTree.SubElement(snp_node, 'codon_merge', {
-            'linked_snp': entry['linked_snp'],
-            'spanning_depth': str(entry['spanning_depth']),
-            'linkage': entry['linkage'],
-            'snp_percentage_linked': f"{entry['snp_percentage_linked']:.1f}",
-            'total_percentage_depth_linked': f"{entry['total_percentage_depth_linked']:.1f}",
+            'name': entry['name'],
+            'region': entry['region'],
+            'direction': entry['direction'],
+            'position': entry['position'],
+            'codon_depth': str(entry['codon_depth']),
+            'reference': entry['reference'],
         })
-        for combo in entry['combos']:
-            ElementTree.SubElement(cm_node, 'combo', {
-                'bases': combo['bases'],
-                'count': str(combo['count']),
-                'percent': f"{combo['percent']:.1f}",
-                'type': combo['type'],
-            })
+        ElementTree.SubElement(cm_node, 'codon_call', {
+            'codon_count': str(entry['codon_call_count']),
+            'percentage': f"{entry['codon_call_percentage']:.1f}",
+        }).text = entry['codon_call']
+        dist_attribs = {
+            seq: str(cnt)
+            for seq, cnt in sorted(entry['codon_distribution'].items(),
+                                   key=lambda kv: -kv[1])
+        }
+        ElementTree.SubElement(cm_node, 'codon_distribution', dist_attribs)
+        ElementTree.SubElement(cm_node, 'excluded_reads', {
+            'has_n': str(entry['excl_has_n']),
+            'no_span': str(entry['excl_no_span']),
+        })
 
 
 class CLIError(Exception):
@@ -1454,22 +1469,32 @@ USAGE
                             significance_node = ElementTree.SubElement(amplicon_node, "significance")
                         if not significance_node.get("flag"):
                             significance_node.set("flag", "insufficient breadth of coverage")
+                    # Parse CDS features first so all codon positions can be
+                    # included in the fragment-allele table (the 3rd codon
+                    # position may not be a SNP and would otherwise be absent).
+                    cds_features = []
+                    if codon_correction and codon_correction_genbank:
+                        cds_features = _parse_genbank_cds(codon_correction_genbank, amplicon.sequence)
                     # Build a fragment-allele table once per amplicon (single BAM
                     # pass), shared by codon correction and discover-roi to avoid
                     # re-scanning the BAM for every SNP/codon pair.
                     pos_table, reach, masked, deleted = {}, {}, {}, {}
-                    if (codon_correction and codon_correction_genbank) or discover_roi:
+                    if cds_features or discover_roi:
                         amp_positions = {
                             _translated_to_amp(int(s['position']), offset)
                             for s in amplicon_data['SNPs'] if int(s.get('depth', 0)) > 0
                         }
+                        # Include all 3 positions of every codon so non-SNP
+                        # positions are available for the full-codon tally.
+                        for cds in cds_features:
+                            for start, end, _ref in cds.codon_boundaries:
+                                amp_positions.update(range(start, end))
                         if len(amp_positions) >= 2:
                             pos_table, reach, masked, deleted = _build_fragment_allele_table(samdata, amp_positions, ref_name)
                     # Apply codon correction (annotate same-codon SNPs via GenBank CDS)
-                    if codon_correction and codon_correction_genbank:
-                        cds_features = _parse_genbank_cds(codon_correction_genbank, amplicon.sequence)
+                    if cds_features:
                         _apply_codon_correction(
-                            amplicon_data['SNPs'], pos_table, deleted,
+                            amplicon_data['SNPs'], pos_table, deleted, masked,
                             cds_features, offset, codon_correction_error, codon_correction_min_reads
                         )
                     # Annotate co-occurring SNPs (discover-roi)
@@ -1484,7 +1509,7 @@ USAGE
                         if 'codon_merges' in snp:
                             _add_codon_merges_node(snp_node, snp['codon_merges'])
                         if 'linked_snps' in snp:
-                            _add_linked_snps_node(snp_node, snp['linked_snps'])
+                            _add_linked_snps_node(snp_node, snp['linked_snps'], snp['name'])
                     del amplicon_data['SNPs']
                     _write_parameters(amplicon_node, amplicon_data)
                     if not wholegenome:

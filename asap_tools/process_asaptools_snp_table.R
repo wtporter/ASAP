@@ -120,7 +120,7 @@ SNPS <- SNPS %>%
 
 # --- Expand codon-merged SNPs (must match process_asaptools_snps_amino_acids.R
 # so SNP values here line up with Amino_Acids/Gene_SNPS for the join below) ---
-SNPS <- expand_codon_merges(SNPS)
+SNPS <- expand_codon_merges(SNPS, MIN_SNP_PERC)
 
 # --- Load Optional AA Data ---
 if (SNP_RDATA == "NULL" || !file.exists(SNP_RDATA) || is.null(SNP_RDATA)) {
