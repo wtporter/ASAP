@@ -188,7 +188,9 @@ generate_SNP_table <- function(include_only = TRUE) {
   # This tells us if a SPECIFIC sample has that specific SNP.
   Background <- Background %>%
     left_join(
-      SNPS %>% select(run, assay_name, name, SNP, snp_proportion, snp_depth),
+      SNPS %>% select(run, assay_name, name, SNP, snp_proportion, snp_depth,
+                      any_of(c("linked_snp_targets", "linked_snp_linkage_pcts",
+                                "linked_snp_co_counts", "linked_snp_shared_depths"))),
       by = c("run", "assay_name", "name", "SNP")
     )
   
@@ -239,7 +241,15 @@ generate_SNP_table <- function(include_only = TRUE) {
     filter(!depth <= MIN_LOCATION_DEPTH) %>% # Filter Low Depth Samples
     filter(snp_proportion > MIN_SNP_PERC) %>% 
     filter(`SNP` %in% sig_positions$SNP) %>% 
-    select(run, assay_name, name, `Primer Region` = Primer, `SNP (Genome)` = SNP, Gene, `SNP (Gene)` = `Gene_SNP`, `Amino Acid Change` = AA, `SNP Depth` = snp_depth, `Location Depth` = depth, `SNP Prevalence` = snp_prop_final)
+    select(run, assay_name, name, `Primer Region` = Primer, `SNP (Genome)` = SNP, Gene, `SNP (Gene)` = `Gene_SNP`, `Amino Acid Change` = AA, `SNP Depth` = snp_depth, `Location Depth` = depth, `SNP Prevalence` = snp_prop_final,
+           any_of(c("linked_snp_targets", "linked_snp_linkage_pcts",
+                     "linked_snp_co_counts", "linked_snp_shared_depths"))) %>%
+    rename(any_of(c(
+      "Linked SNP Targets"  = "linked_snp_targets",
+      "Linkage (%)"         = "linked_snp_linkage_pcts",
+      "Co-occurring Count"  = "linked_snp_co_counts",
+      "Shared Read Depth"   = "linked_snp_shared_depths"
+    )))
 
   return(list(Wide, SNP_Linelist))
 }

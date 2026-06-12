@@ -63,7 +63,11 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
 
     Out <- data.frame()
 
-    if (all(MUTATION_vec != "_" & nchar(MUTATION_vec) == 1)) {
+    is_snp       <- all(MUTATION_vec != "_" & nchar(MUTATION_vec) == 1)
+    is_insertion <- length(MUTATION_vec) == 1 && nchar(MUTATION_vec[1]) %% 3 == 1 && nchar(MUTATION_vec[1]) > 1
+    is_deletion  <- all(MUTATION_vec == "_") && length(MUTATION_vec) %% 3 == 0
+
+    if (is_snp) {
       for (GENE in 1:nrow(Reference_DF)) {
         if (all(POSITION_vec >= Reference_DF$start[GENE] & POSITION_vec <= Reference_DF$end[GENE])) {
 
@@ -115,6 +119,102 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
           ))
         }
       }
+
+    } else if (is_insertion) {
+      for (GENE in 1:nrow(Reference_DF)) {
+        if (POSITION_vec[1] >= Reference_DF$start[GENE] & POSITION_vec[1] <= Reference_DF$end[GENE]) {
+
+          SNP_in_gene  <- (POSITION_vec[1] - Reference_DF$start[GENE]) + 1
+          ref_gene_str <- Reference_DF$sequence[GENE]
+          mut          <- MUTATION_vec[1]
+
+          Theoretical_Ref <- substr(ref_gene_str, SNP_in_gene, SNP_in_gene)
+          mut_out <- mut
+
+          if (Reference_DF$strand[GENE] == "-") {
+            ref_gene_str    <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_gene_str)))
+            SNP_in_gene     <- (Reference_DF$end[GENE] - POSITION_vec[1]) + 1
+            mut_out         <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(mut)))
+            Theoretical_Ref <- substr(ref_gene_str, SNP_in_gene, SNP_in_gene)
+          }
+
+          obs_gene_str <- paste0(substr(ref_gene_str, 1, SNP_in_gene - 1),
+                                  mut_out,
+                                  substr(ref_gene_str, SNP_in_gene + 1, nchar(ref_gene_str)))
+
+          AA_Seq_str <- as.character(Biostrings::translate(Biostrings::DNAString(ref_gene_str), if.fuzzy.codon = "solve"))
+          AA_Obs_str <- as.character(Biostrings::translate(Biostrings::DNAString(obs_gene_str),  if.fuzzy.codon = "solve"))
+
+          ins_bases <- substr(mut_out, 2, nchar(mut_out))
+
+          if (AA_Seq_str == AA_Obs_str) {
+            AA_Change <- "Synonymous"
+          } else {
+            n_min <- min(nchar(AA_Seq_str), nchar(AA_Obs_str))
+            first_diff <- n_min + 1
+            for (.i in seq_len(n_min)) {
+              if (substr(AA_Seq_str, .i, .i) != substr(AA_Obs_str, .i, .i)) { first_diff <- .i; break }
+            }
+            ins_len_aa <- nchar(AA_Obs_str) - nchar(AA_Seq_str)
+            ins_aa_str <- substr(AA_Obs_str, first_diff, first_diff + ins_len_aa - 1)
+            AA_Change  <- paste0(Reference_DF$gene[GENE], ":", first_diff, "ins", ins_aa_str)
+          }
+
+          Out <- rbind(Out, data.frame(
+            SNP                   = as.character(GENOME_SNP),
+            snp_position_genome   = as.character(POSITION_vec[1]),
+            snp_position_gene     = as.character(SNP_in_gene),
+            Theoretical_Reference = Theoretical_Ref,
+            Gene                  = as.character(Reference_DF$gene[GENE]),
+            Product               = as.character(Reference_DF$product[GENE]),
+            AA                    = AA_Change,
+            SNP_Gene              = paste0(Theoretical_Ref, SNP_in_gene, "ins", ins_bases)
+          ))
+        }
+      }
+
+    } else if (is_deletion) {
+      for (GENE in 1:nrow(Reference_DF)) {
+        if (all(POSITION_vec >= Reference_DF$start[GENE] & POSITION_vec <= Reference_DF$end[GENE])) {
+
+          SNP_in_gene_vec <- (POSITION_vec - Reference_DF$start[GENE]) + 1
+          ref_gene_str    <- Reference_DF$sequence[GENE]
+
+          Theoretical_Ref_vec <- sapply(SNP_in_gene_vec, function(p) substr(ref_gene_str, p, p))
+
+          if (Reference_DF$strand[GENE] == "-") {
+            ref_gene_str    <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_gene_str)))
+            SNP_in_gene_vec <- sort((Reference_DF$end[GENE] - POSITION_vec) + 1)
+            Theoretical_Ref_vec <- sapply(SNP_in_gene_vec, function(p) substr(ref_gene_str, p, p))
+          }
+
+          del_start <- min(SNP_in_gene_vec)
+          del_end   <- max(SNP_in_gene_vec)
+          obs_gene_str <- paste0(substr(ref_gene_str, 1, del_start - 1),
+                                  substr(ref_gene_str, del_end + 1, nchar(ref_gene_str)))
+
+          AA_Seq_str <- as.character(Biostrings::translate(Biostrings::DNAString(ref_gene_str), if.fuzzy.codon = "solve"))
+          AA_Obs_str <- as.character(Biostrings::translate(Biostrings::DNAString(obs_gene_str),  if.fuzzy.codon = "solve"))
+
+          del_aa_start <- ceiling(del_start / 3)
+          del_aa_end   <- ceiling(del_end   / 3)
+          del_aa_str   <- substr(AA_Seq_str, del_aa_start, del_aa_end)
+
+          AA_Change <- if (AA_Seq_str == AA_Obs_str) "Synonymous" else
+            paste0(Reference_DF$gene[GENE], ":", del_aa_str, del_aa_start, "del")
+
+          Out <- rbind(Out, data.frame(
+            SNP                   = as.character(GENOME_SNP),
+            snp_position_genome   = paste(POSITION_vec, collapse = "|"),
+            snp_position_gene     = paste(SNP_in_gene_vec, collapse = "|"),
+            Theoretical_Reference = paste(Theoretical_Ref_vec, collapse = "|"),
+            Gene                  = as.character(Reference_DF$gene[GENE]),
+            Product               = as.character(Reference_DF$product[GENE]),
+            AA                    = AA_Change,
+            SNP_Gene              = paste0(Theoretical_Ref_vec[1], del_start, "del", n_comp, "bp")
+          ))
+        }
+      }
     }
     Out
   }
@@ -128,13 +228,16 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
   has_insertion  <- sapply(mut_components, function(m) any(nchar(m) > 1))
   has_deletion   <- sapply(mut_components, function(m) any(m == "_"))
 
-  Out$AA[is.na(Out$AA) & has_insertion] <- "Insertions Not Supported"
-  Out$AA[is.na(Out$AA) & has_deletion]  <- "Deletions Not Supported"
-  Out$AA[is.na(Out$AA)]                 <- "Non-coding SNP"
+  is_inframe_ins <- sapply(mut_components, function(m) length(m) == 1 && nchar(m[1]) > 1 && nchar(m[1]) %% 3 == 1)
+  is_inframe_del <- sapply(mut_components, function(m) all(m == "_") && length(m) %% 3 == 0)
 
-  Out$SNP_Gene[is.na(Out$SNP_Gene) & has_insertion] <- "Insertions Not Supported"
-  Out$SNP_Gene[is.na(Out$SNP_Gene) & has_deletion]  <- "Deletions Not Supported"
-  Out$SNP_Gene[is.na(Out$SNP_Gene)]                  <- "Non-coding SNP"
+  Out$AA[is.na(Out$AA) & has_insertion & !is_inframe_ins] <- "Insertion Not In-frame"
+  Out$AA[is.na(Out$AA) & has_deletion  & !is_inframe_del] <- "Deletion Not In-frame"
+  Out$AA[is.na(Out$AA)]                                   <- "Non-coding SNP"
+
+  Out$SNP_Gene[is.na(Out$SNP_Gene) & has_insertion & !is_inframe_ins] <- "Insertion Not In-frame"
+  Out$SNP_Gene[is.na(Out$SNP_Gene) & has_deletion  & !is_inframe_del] <- "Deletion Not In-frame"
+  Out$SNP_Gene[is.na(Out$SNP_Gene)]                                    <- "Non-coding SNP"
 
   select(Out, SNP, SNP_Gene, AA, Gene, Product, Theoretical_Reference)
 }

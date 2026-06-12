@@ -213,7 +213,7 @@ process PROCESS_BAM {
 
 process OUTPUT_COMBINER {
     tag "output_combiner"
-    publishDir "${params.outdir}/sample_reports", mode: 'copy'
+    publishDir "${params.outdir}/sample_reports/general_reports", mode: 'copy'
 
     input:
     path xml_files
@@ -229,7 +229,7 @@ process OUTPUT_COMBINER {
 
 process FORMAT_OUTPUT {
     tag "format_output"
-    publishDir "${params.outdir}/sample_reports", mode: 'copy'
+    publishDir "${params.outdir}/sample_reports/general_reports", mode: 'copy'
     stageInMode = 'copy'
 
     def out_file = params.out_file ? params.out_file : "${params.file_name}_report.html"

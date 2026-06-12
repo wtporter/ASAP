@@ -71,7 +71,8 @@ genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = parallelly::availabl
         if (Reference_DF$strand[GENE] == "-") {
           for (i in seq_len(n_comp)) {
             Theoretical_Ref_vec[i] <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(Theoretical_Ref_vec[i])))
-            MUTATION_out_vec[i]    <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(MUTATION_vec[i])))
+            MUTATION_out_vec[i] <- if (MUTATION_vec[i] == "_") "_" else
+              as.character(Biostrings::reverseComplement(Biostrings::DNAString(MUTATION_vec[i])))
           }
           SNP_in_gene_vec <- (Reference_DF$end[GENE] - POSITION_vec) + 1
         }

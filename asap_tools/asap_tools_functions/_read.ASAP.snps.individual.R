@@ -87,6 +87,19 @@ read.ASAP.snps.individual <- function(XML) {
             codon_merge_distribution <- NA_character_
           }
 
+          LinkedSNP_Nodes <- xml_find_all(SNP_Node, "linked_snps/linked_snp")
+          if (length(LinkedSNP_Nodes) > 0) {
+            linked_snp_targets       <- paste(xml_attr(LinkedSNP_Nodes, "target_variant"),      collapse = ";")
+            linked_snp_linkage_pcts  <- paste(xml_attr(LinkedSNP_Nodes, "linkage_pct"),         collapse = ";")
+            linked_snp_co_counts     <- paste(xml_attr(LinkedSNP_Nodes, "co_occurring_count"),   collapse = ";")
+            linked_snp_shared_depths <- paste(xml_attr(LinkedSNP_Nodes, "shared_read_depth"),    collapse = ";")
+          } else {
+            linked_snp_targets       <- NA_character_
+            linked_snp_linkage_pcts  <- NA_character_
+            linked_snp_co_counts     <- NA_character_
+            linked_snp_shared_depths <- NA_character_
+          }
+
           SNP_Info <- data.frame(
             location_depth   = xml_attr(SNP_Node, "depth"),
             snp_name         = xml_attr(SNP_Node, "name"),
@@ -101,7 +114,11 @@ read.ASAP.snps.individual <- function(XML) {
             codon_merge_position     = codon_merge_position,
             codon_merge_codon_depth  = codon_merge_codon_depth,
             codon_merge_reference    = codon_merge_reference,
-            codon_merge_distribution = codon_merge_distribution
+            codon_merge_distribution = codon_merge_distribution,
+            linked_snp_targets       = linked_snp_targets,
+            linked_snp_linkage_pcts  = linked_snp_linkage_pcts,
+            linked_snp_co_counts     = linked_snp_co_counts,
+            linked_snp_shared_depths = linked_snp_shared_depths
           )
 
           Temp <- cbind(Run_Info, Sample_Info, Assay_Info, Amplicon_Info, SNP_Info)
