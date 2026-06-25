@@ -334,8 +334,8 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
         pileup_dict['depths'] = ",".join(str(n) for n in depth_array)
         pileup_dict['proportions'] = ",".join(prop_array)
         pileup_dict['n_reads'] = ",".join(str(n) for n in n_read_array)
+        pileup_dict['quality_discards'] = ",".join(str(n) for n in quality_discard_array)
     pileup_dict['breadth'] = str(breadth_positions/amplicon_length * 100)
-    pileup_dict['quality_discards'] = ",".join(str(n) for n in quality_discard_array)
     pileup_dict['SNPs'] = snp_list
     pileup_dict['average_depth'] = str(avg_depth_total/avg_depth_positions) if avg_depth_positions else "0"
     return pileup_dict

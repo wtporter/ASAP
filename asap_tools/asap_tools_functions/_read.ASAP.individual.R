@@ -1,7 +1,7 @@
-read.ASAP.individual <- function(XML) {
-  library(xml2)
-  library(tidyverse)
+library(xml2)
+library(tidyverse)
 
+read.ASAP.individual <- function(XML) {
   Out <- data.frame()
   xml_data <- xml2::read_xml(XML, options = "HUGE")
 

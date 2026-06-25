@@ -27,33 +27,45 @@ PROFILE = 0
 PRESENCE_ABSENCE = 10
 GENE_VARIANT = 20
 
+def _parse_genbank_origin(gb_file):
+    """Yield (locus_name, sequence) tuples from GenBank records without parsing features."""
+    in_origin = False
+    current_seq = []
+    current_locus = None
+    with open(gb_file) as fh:
+        for line in fh:
+            if line.startswith('LOCUS'):
+                current_locus = line.split()[1]
+            elif line.startswith('ORIGIN'):
+                in_origin = True
+                current_seq = []
+            elif line.startswith('//'):
+                if in_origin and current_seq:
+                    yield current_locus, ''.join(current_seq)
+                in_origin = False
+                current_seq = []
+                current_locus = None
+            elif in_origin:
+                current_seq.append(re.sub(r'[\d\s]', '', line))
+
 def _process_genbank(gb_file):
     """
-    Simplified GenBank parser. 
-    Uses the FILENAME as the assay name and matches FASTA logic for ASAP validation.
+    Simplified GenBank parser.
+    Uses the LOCUS name from each record as the assay name so multi-chromosome
+    genome files produce unique entries. Reads only the ORIGIN sequence section
+    to avoid skbio failures on complex feature location strings (fuzzy joins, etc.)
+    in NCBI full-genome files.
     """
     return_list = []
-    
-    # Extract the filename without the extension to use as the name
     base_name = os.path.splitext(os.path.basename(gb_file))[0]
-    
-    for seq in skbio.io.registry.read(gb_file, format='genbank', constructor=DNA):
-        # 1. Use the filename as the assay name
-        assay_name = base_name
-        
-        # 2. Extract and clean sequence
-        full_seq_str = _clean_seq(str(seq))
-        
-        # 3. Create Amplicon
-        amplicon = assayInfo.Amplicon(sequence=full_seq_str)
-        
-        # 4. Wrap it in a Target and Assay
-        # Using 'species ID' and 'presence/absence' to satisfy ASAP strict validation
+
+    for locus_name, seq_str in _parse_genbank_origin(gb_file):
+        assay_name = f"{base_name}_{locus_name}" if locus_name else base_name
+        amplicon = assayInfo.Amplicon(sequence=_clean_seq(seq_str))
         target = assayInfo.Target(function='species ID', amplicon=amplicon)
         assay = assayInfo.Assay(name=assay_name, assay_type='presence/absence', target=target)
-        
         return_list.append(assay)
-        
+
     return return_list
 
 def _process_fasta(fasta, fasta_type, message=None):

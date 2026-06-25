@@ -69,33 +69,59 @@ def _mark_read_unaligned(read):
     return(read)
 
 def _passes_identity(read, percid):
-    length = read.infer_query_length(False)
     logging.info("Checking %s against reference %s" % (read.query_name, read.reference_name))
-    logging.info("\tAligned length %i, total read length %i" % (read.query_alignment_length or -1, length or -1))
-    if not length:
+    logging.info("\tAligned length %i, total read length %i" % (read.query_alignment_length or -1, read.infer_query_length(False) or -1))
+    seq = read.query_sequence
+    if not seq or not read.query_alignment_length:
         return False
-    if read.query_alignment_length / length >= percid: #Quick check that the aligned length even passes threshold
-        matches = 0
-        gap_count = 0
-        for (qpos, rpos, seq) in read.get_aligned_pairs(with_seq=True):
-            query = read.query_sequence[qpos] if qpos else "None"
-            #if there is a gap in the alignment, extend the length of the query or reference accordingly
-            if rpos is None:
-                pass #amp_length += 1
-            elif qpos is None:
-                gap_count += 1
-            else:
-                if read.query_sequence[qpos].upper() == seq.upper():
-                    matches += 1
-        effective_length = length + gap_count
-        if matches / effective_length >= percid: #Using length instead of amp_length to compare to query instead of reference
-            logging.info("\t\tFound %i matches out of %i, keeping..." % (matches, length))
-            return True
+
+    # Identify the non-N middle of the aligned region by stripping leading/trailing
+    # N runs (primer-masked positions).  Only this middle sequence is compared.
+    qas = read.query_alignment_start
+    qae = read.query_alignment_end
+    aligned_seq = seq[qas:qae]
+
+    first = 0
+    while first < len(aligned_seq) and aligned_seq[first].upper() == 'N':
+        first += 1
+    last = len(aligned_seq) - 1
+    while last >= 0 and aligned_seq[last].upper() == 'N':
+        last -= 1
+
+    if first > last:
+        logging.info("\t\tEntire aligned region is N-masked, marking as unaligned...")
+        return False
+
+    q_start = qas + first
+    q_end   = qas + last
+
+    matches = 0
+    gap_count = 0
+    compared = 0
+    for (qpos, rpos, ref_base) in read.get_aligned_pairs(with_seq=True):
+        if rpos is None:
+            pass  # insertion or soft-clip
+        elif qpos is None:
+            gap_count += 1  # deletion
         else:
-            logging.info("\t\tFound %i matches out of %i, marking as unaligned..." % (matches, length))
-            return False
-    else: #aligned proportion below threshold
-        logging.info("\t\tAlignment too short, marking as unaligned...")
+            if qpos < q_start or qpos > q_end:
+                continue  # outside the non-N middle region
+            base = seq[qpos].upper()
+            if base == 'N':
+                continue  # interior N, skip
+            compared += 1
+            if base == ref_base.upper():
+                matches += 1
+
+    effective_length = compared + gap_count
+    if not effective_length:
+        return False
+
+    if matches / effective_length >= percid:
+        logging.info("\t\tFound %i matches out of %i, keeping..." % (matches, effective_length))
+        return True
+    else:
+        logging.info("\t\tFound %i matches out of %i, marking as unaligned..." % (matches, effective_length))
         return False
 
 def _identity_filter(samdata, ref_names, percid, merge, filter_pairs, out_fp):

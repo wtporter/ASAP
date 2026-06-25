@@ -1,11 +1,11 @@
-genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = parallelly::availableCores()) {
-  library(tidyverse)
-  library(genbankr)
-  library(Biostrings)
-  library(foreach)
-  library(doParallel)
-  library(parallelly)
+library(tidyverse)
+library(genbankr)
+library(Biostrings)
+library(foreach)
+library(doParallel)
+library(parallelly)
 
+genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = NULL) {
   reference    <- suppressWarnings(genbankr::readGenBank(ref_seq))
   Reference_DF <- left_join(
     data.frame(reference@genes),
@@ -39,12 +39,16 @@ genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = parallelly::availabl
 
   Tokens_By_Row <- split(SNP_Tokens, SNP_Tokens$.snp_row)
 
-  cl <- makeCluster(cores)
-  registerDoParallel(cl)
+  if (!is.null(cores) && cores > 1) {
+    cl <- makeCluster(cores)
+    registerDoParallel(cl)
+    on.exit(stopCluster(cl))
+  } else {
+    registerDoSEQ()
+  }
 
-  Temp <- foreach(SNP = 1:nrow(SNP_List), .combine = rbind) %dopar% {
-    library(dplyr)
-    library(Biostrings)
+  Temp <- foreach(SNP = 1:nrow(SNP_List), .combine = rbind,
+                  .packages = c("dplyr", "Biostrings")) %dopar% {
 
     GENOME_SNP <- SNP_List$SNP[SNP]
     Components <- Tokens_By_Row[[as.character(SNP)]]
@@ -92,8 +96,6 @@ genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = parallelly::availabl
     }
     Out
   }
-
-  stopCluster(cl)
 
   Out <- full_join(select(SNP_List, SNP), Temp)
   Out$Gene[is.na(Out$Gene)]         <- "Non-gene region"

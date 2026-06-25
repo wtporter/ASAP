@@ -1,6 +1,6 @@
-expand_codon_merges <- function(SNPS, min_snp_perc = 0) {
-  library(tidyverse)
+library(tidyverse)
 
+expand_codon_merges <- function(SNPS, min_snp_perc = 0) {
   # Nothing to do if this run produced no codon_merge annotations at all.
   if (!"codon_merge_name" %in% names(SNPS) ||
       all(is.na(SNPS$codon_merge_name) | SNPS$codon_merge_name == "")) {

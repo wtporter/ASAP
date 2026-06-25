@@ -16,7 +16,7 @@ process PREPARE_ASAP_JSON {
     def first_file = file_list[0].name.toLowerCase()
 
     // 1. Identify Format
-    def is_gb = first_file.endsWith('.gb') || first_file.endsWith('.gbk') || first_file.endsWith('.gbb') || first_file.endsWith('.genbank')
+    def is_gb = first_file.endsWith('.gb') || first_file.endsWith('.gbk') || first_file.endsWith('.gbb') || first_file.endsWith('.gbf') || first_file.endsWith('.genbank')
     def is_fasta = first_file.endsWith('.fasta') || first_file.endsWith('.fa')
     def is_excel = first_file.endsWith('.xlsx') || first_file.endsWith('.xls')
 
@@ -27,7 +27,7 @@ process PREPARE_ASAP_JSON {
         Format detected: ${is_fasta ? 'FASTA' : is_excel ? 'Excel' : 'Unknown'}
         Number of files: ${num_files}
         
-        ASAP only supports multiple reference files when using GenBank (.gb, .gbb, .gbk) format.
+        ASAP only supports multiple reference files when using GenBank (.gb, .gbf, .gbb, .gbk) format.
         Please provide only one file for FASTA or Excel inputs.
         """.stripIndent()
     }

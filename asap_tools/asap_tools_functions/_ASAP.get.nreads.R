@@ -1,10 +1,15 @@
-ASAP.get.nreads <- function(read.ASAP.df, num_cores = 1) {
-  library(dplyr)
-  library(foreach)
-  library(doParallel)
+library(dplyr)
+library(foreach)
+library(doParallel)
 
-  cl <- makeCluster(num_cores)
-  registerDoParallel(cl)
+ASAP.get.nreads <- function(read.ASAP.df, num_cores = 1) {
+  if (num_cores > 1) {
+    cl <- makeCluster(num_cores)
+    registerDoParallel(cl)
+    on.exit(stopCluster(cl))
+  } else {
+    registerDoSEQ()
+  }
 
   n_reads_out <- foreach(i = 1:nrow(read.ASAP.df), .combine = bind_rows) %dopar% {
     run        <- read.ASAP.df$run[[i]]
@@ -17,8 +22,6 @@ ASAP.get.nreads <- function(read.ASAP.df, num_cores = 1) {
 
     data.frame(run, name, assay_name, position, n_reads)
   }
-
-  stopCluster(cl)
 
   n_reads_out$position <- as.numeric(as.character(n_reads_out$position))
 

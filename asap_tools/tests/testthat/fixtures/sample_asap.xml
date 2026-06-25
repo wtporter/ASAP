@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sample name="TEST_SAMPLE" total_reads="10000" trimmed_reads="9800" mapped_reads="9500"
+        unassigned_reads="100" unmapped_reads="400">
+  <assay function="genotyping" gene="rpoB" name="TB_rpoB" type="amp">
+    <amplicon aligned_reads="9500" primer_reads="9400" no_primer_reads="100"
+              identity_input="9400" identity_discarded="10"
+              smor_input="9390" smor_pairs_dropped="50" smor_consensus_reads="9300"
+              smor_singleton_reads="40" reads="9300">
+      <breadth>0.98</breadth>
+      <average_depth>450</average_depth>
+      <consensus_sequence>ATCG</consensus_sequence>
+      <depths>450,448,451,449,450,447,452,448,450,451</depths>
+      <proportions>0.98,0.97,0.99,0.98,0.97,0.98,0.99,0.97,0.98,0.99</proportions>
+      <quality_discards>2,3,1,2,3,2,1,3,2,1</quality_discards>
+      <n_reads>450,448,451,449,450,447,452,448,450,451</n_reads>
+      <snp name="S450L" position="1349" reference="C" depth="450">
+        <base_distribution A="0" C="45" G="0" T="405" _="0"/>
+        <snp_call count="405" percent="90.0">T</snp_call>
+      </snp>
+      <snp name="D516V" position="1547" reference="A" depth="448">
+        <base_distribution A="40" C="0" G="0" T="408" _="0"/>
+        <snp_call count="408" percent="91.1">T</snp_call>
+      </snp>
+    </amplicon>
+  </assay>
+</sample>

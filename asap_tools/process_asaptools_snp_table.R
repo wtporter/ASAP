@@ -10,6 +10,7 @@ library(foreach)
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
 .functions_dir <- file.path(dirname(.script_path), "asap_tools_functions")
 source(file.path(.functions_dir, "_expand_codon_merges.R"))
+source(file.path(.functions_dir, "_parse_snp_distribution.R"))
 
 # --- Argument Parsing ---
 args <- commandArgs(trailingOnly = TRUE)
@@ -102,21 +103,7 @@ if (BED_FILE == "NA" || BED_FILE == "NULL" || is.null(BED_FILE)) { # !file.exist
 ######################
 # Extract Unique Amino Acids from SNPs
 ######################
-SNPS$snp_distribution[is.na(SNPS$snp_distribution)] <- "A=0, T=0, C=0, G=0, _=0"
-SNPS <- SNPS %>% mutate(space_count = str_count(snp_distribution, " "))
-max_spaces <- max(SNPS$space_count, na.rm = TRUE)
-
-SNPS <- SNPS %>%
-  relocate(snp_distribution, .after = last_col()) %>%
-  separate(snp_distribution, into = paste0("Dist", 1:(1 + max_spaces)), sep = ", ", fill = "right") %>%
-  pivot_longer(starts_with("Dist"), names_to = "Temp", values_to = "Dist") %>%
-  select(-Temp) %>%
-  filter(!is.na(Dist)) %>%
-  separate(Dist, into = c("Call", "n"), sep = "=") %>%
-  mutate(snp_proportion = 100*(as.numeric(n)/as.numeric(location_depth))) %>%
-  mutate(SNP = paste0(snp_reference, snp_position, Call)) %>%
-  filter(snp_reference != Call) %>%
-  filter(!is.na(snp_proportion))
+SNPS <- parse_snp_distribution(SNPS)
 
 # --- Expand codon-merged SNPs (must match process_asaptools_snps_amino_acids.R
 # so SNP values here line up with Amino_Acids/Gene_SNPS for the join below) ---
@@ -190,7 +177,11 @@ generate_SNP_table <- function(include_only = TRUE) {
     left_join(
       SNPS %>% select(run, assay_name, name, SNP, snp_proportion, snp_depth,
                       any_of(c("linked_snp_targets", "linked_snp_linkage_pcts",
-                                "linked_snp_co_counts", "linked_snp_shared_depths"))),
+                                "linked_snp_co_counts", "linked_snp_shared_depths",
+                                "snp_call_qual_mean", "snp_call_qual_median",
+                                "snp_call_qual_min", "snp_call_qual_max",
+                                "snp_ref_qual_mean", "snp_ref_qual_median",
+                                "snp_ref_qual_min", "snp_ref_qual_max"))),
       by = c("run", "assay_name", "name", "SNP")
     )
   
@@ -213,6 +204,24 @@ generate_SNP_table <- function(include_only = TRUE) {
       )
     )
   
+  # 5b. Format quality columns if present (from base_quality XML nodes)
+  if (all(c("snp_call_qual_mean", "snp_call_qual_median", "snp_call_qual_min", "snp_call_qual_max") %in% names(Background))) {
+    Background <- Background %>%
+      mutate(`SNP Quality [mean(median, min-max)]` = ifelse(!is.na(snp_call_qual_mean),
+                                     sprintf("%.1f (%.1f, %.0f-%.0f)",
+                                             snp_call_qual_mean, snp_call_qual_median,
+                                             snp_call_qual_min, snp_call_qual_max),
+                                     NA_character_))
+  }
+  if (all(c("snp_ref_qual_mean", "snp_ref_qual_median", "snp_ref_qual_min", "snp_ref_qual_max") %in% names(Background))) {
+    Background <- Background %>%
+      mutate(`Reference Quality [mean(median, min-max)]` = ifelse(!is.na(snp_ref_qual_mean),
+                                           sprintf("%.1f (%.1f, %.0f-%.0f)",
+                                                   snp_ref_qual_mean, snp_ref_qual_median,
+                                                   snp_ref_qual_min, snp_ref_qual_max),
+                                           NA_character_))
+  }
+
   #6. Pivot to Wide format
   Wide <- Background %>%
     select(Run = run,
@@ -242,7 +251,9 @@ generate_SNP_table <- function(include_only = TRUE) {
     filter(snp_proportion > MIN_SNP_PERC) %>% 
     filter(`SNP` %in% sig_positions$SNP) %>% 
     select(run, assay_name, name, `Primer Region` = Primer, `SNP (Genome)` = SNP, Gene, `SNP (Gene)` = `Gene_SNP`, `Amino Acid Change` = AA, `SNP Depth` = snp_depth, `Location Depth` = depth, `SNP Prevalence` = snp_prop_final,
-           any_of(c("linked_snp_targets", "linked_snp_linkage_pcts",
+           any_of(c("SNP Quality [mean(median, min-max)]",
+                     "Reference Quality [mean(median, min-max)]",
+                     "linked_snp_targets", "linked_snp_linkage_pcts",
                      "linked_snp_co_counts", "linked_snp_shared_depths"))) %>%
     rename(any_of(c(
       "Linked SNP Targets"  = "linked_snp_targets",

@@ -110,8 +110,8 @@ for (REFERENCE in GENBANK_FILES) {
     snp_db = SNPS_To_AA,
     ref_seq = REFERENCE,
     cores = parallelly::availableCores()
-  ) %>%
-    mutate(assay_name=file_base))
+  )) %>%
+    left_join(select(SNPS_To_AA, SNP, assay_name), by = "SNP")
 
   message(paste0("Processing Amino Acids: ", REFERENCE, " (ID: ", acc_id, " | FileBase: ", file_base, ")"))
 
@@ -120,8 +120,8 @@ for (REFERENCE in GENBANK_FILES) {
     snp_db = SNPS_To_AA,
     ref_seq = REFERENCE,
     cores = parallelly::availableCores()
-  ) %>%
-    mutate(assay_name=file_base))
+  )) %>%
+    left_join(select(SNPS_To_AA, SNP, assay_name), by = "SNP")
 
   all_gene_snps[[acc_id]] <- gene_snps_sub
   all_amino_acids[[acc_id]] <- amino_acids_sub

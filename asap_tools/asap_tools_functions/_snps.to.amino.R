@@ -1,15 +1,161 @@
-snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores()) {
-  library(tidyverse)
-  library(genbankr)
-  library(Biostrings)
-  library(foreach)
-  library(doParallel)
-  library(parallelly)
+library(tidyverse)
+library(genbankr)
+library(Biostrings)
+library(foreach)
+library(doParallel)
+library(parallelly)
 
+# ---------------------------------------------------------------------------
+# Pure translation helpers — take scalar gene metadata + SNP vectors, return
+# a single-row data.frame. No file I/O; directly unit-testable.
+# ---------------------------------------------------------------------------
+
+.translate_snp <- function(position_vec, mutation_vec, genome_snp,
+                            gene_seq, gene_start, gene_end, gene_strand,
+                            gene_name, gene_product) {
+  n_comp       <- length(position_vec)
+  gene_seq_dna <- Biostrings::DNAString(gene_seq)
+  snp_in_gene  <- (position_vec - gene_start) + 1
+
+  ref_bases <- character(n_comp)
+  obs_seq   <- gene_seq_dna
+  for (i in seq_len(n_comp)) {
+    ref_bases[i]          <- as.character(gene_seq_dna[snp_in_gene[i]])
+    obs_seq[snp_in_gene[i]] <- mutation_vec[i]
+  }
+  mut_out <- mutation_vec
+
+  if (gene_strand == "-") {
+    gene_seq_dna <- Biostrings::reverseComplement(gene_seq_dna)
+    obs_seq      <- Biostrings::reverseComplement(obs_seq)
+    for (i in seq_len(n_comp)) {
+      ref_bases[i] <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_bases[i])))
+      mut_out[i]   <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(mutation_vec[i])))
+    }
+    snp_in_gene <- (gene_end - position_vec) + 1
+  }
+
+  aa_ref <- Biostrings::translate(gene_seq_dna, if.fuzzy.codon = "solve")
+  aa_obs <- Biostrings::translate(obs_seq,       if.fuzzy.codon = "solve")
+
+  mutations <- Biostrings::pairwiseAlignment(aa_ref, aa_obs) %>%
+    Biostrings::mismatchTable() %>%
+    mutate(AA_Change = paste0(gene_name, ":", PatternSubstring, PatternStart, SubjectSubstring))
+
+  data.frame(
+    SNP                   = as.character(genome_snp),
+    snp_position_genome   = paste(position_vec,  collapse = "|"),
+    snp_position_gene     = paste(snp_in_gene,   collapse = "|"),
+    Theoretical_Reference = paste(ref_bases,     collapse = "|"),
+    Gene                  = as.character(gene_name),
+    Product               = as.character(gene_product),
+    AA = as.character(ifelse(
+      length(as.character(unique(mutations$AA_Change))) > 0,
+      as.character(unique(mutations$AA_Change)),
+      "Synonymous"
+    )),
+    SNP_Gene = paste(paste0(ref_bases, snp_in_gene, mut_out), collapse = "|")
+  )
+}
+
+.translate_insertion <- function(position, mutation, genome_snp,
+                                  gene_seq, gene_start, gene_end, gene_strand,
+                                  gene_name, gene_product) {
+  snp_in_gene  <- (position - gene_start) + 1
+  ref_gene_str <- gene_seq
+  mut_out      <- mutation
+  theo_ref     <- substr(ref_gene_str, snp_in_gene, snp_in_gene)
+
+  if (gene_strand == "-") {
+    ref_gene_str <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_gene_str)))
+    snp_in_gene  <- (gene_end - position) + 1
+    mut_out      <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(mutation)))
+    theo_ref     <- substr(ref_gene_str, snp_in_gene, snp_in_gene)
+  }
+
+  obs_gene_str <- paste0(substr(ref_gene_str, 1, snp_in_gene - 1),
+                          mut_out,
+                          substr(ref_gene_str, snp_in_gene + 1, nchar(ref_gene_str)))
+
+  aa_ref_str <- as.character(Biostrings::translate(Biostrings::DNAString(ref_gene_str), if.fuzzy.codon = "solve"))
+  aa_obs_str <- as.character(Biostrings::translate(Biostrings::DNAString(obs_gene_str),  if.fuzzy.codon = "solve"))
+
+  ins_bases <- substr(mut_out, 2, nchar(mut_out))
+
+  if (aa_ref_str == aa_obs_str) {
+    aa_change <- "Synonymous"
+  } else {
+    n_min      <- min(nchar(aa_ref_str), nchar(aa_obs_str))
+    first_diff <- n_min + 1
+    for (.i in seq_len(n_min)) {
+      if (substr(aa_ref_str, .i, .i) != substr(aa_obs_str, .i, .i)) { first_diff <- .i; break }
+    }
+    ins_len_aa <- nchar(aa_obs_str) - nchar(aa_ref_str)
+    ins_aa_str <- substr(aa_obs_str, first_diff, first_diff + ins_len_aa - 1)
+    aa_change  <- paste0(gene_name, ":", first_diff, "ins", ins_aa_str)
+  }
+
+  data.frame(
+    SNP                   = as.character(genome_snp),
+    snp_position_genome   = as.character(position),
+    snp_position_gene     = as.character(snp_in_gene),
+    Theoretical_Reference = theo_ref,
+    Gene                  = as.character(gene_name),
+    Product               = as.character(gene_product),
+    AA                    = aa_change,
+    SNP_Gene              = paste0(theo_ref, snp_in_gene, "ins", ins_bases)
+  )
+}
+
+.translate_deletion <- function(position_vec, genome_snp,
+                                 gene_seq, gene_start, gene_end, gene_strand,
+                                 gene_name, gene_product) {
+  n_comp       <- length(position_vec)
+  snp_in_gene  <- (position_vec - gene_start) + 1
+  ref_gene_str <- gene_seq
+  theo_refs    <- sapply(snp_in_gene, function(p) substr(ref_gene_str, p, p))
+
+  if (gene_strand == "-") {
+    ref_gene_str <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_gene_str)))
+    snp_in_gene  <- sort((gene_end - position_vec) + 1)
+    theo_refs    <- sapply(snp_in_gene, function(p) substr(ref_gene_str, p, p))
+  }
+
+  del_start    <- min(snp_in_gene)
+  del_end      <- max(snp_in_gene)
+  obs_gene_str <- paste0(substr(ref_gene_str, 1, del_start - 1),
+                          substr(ref_gene_str, del_end + 1, nchar(ref_gene_str)))
+
+  aa_ref_str <- as.character(Biostrings::translate(Biostrings::DNAString(ref_gene_str), if.fuzzy.codon = "solve"))
+  aa_obs_str <- as.character(Biostrings::translate(Biostrings::DNAString(obs_gene_str),  if.fuzzy.codon = "solve"))
+
+  del_aa_start <- ceiling(del_start / 3)
+  del_aa_end   <- ceiling(del_end   / 3)
+  del_aa_str   <- substr(aa_ref_str, del_aa_start, del_aa_end)
+
+  aa_change <- if (aa_ref_str == aa_obs_str) "Synonymous" else
+    paste0(gene_name, ":", del_aa_str, del_aa_start, "del")
+
+  data.frame(
+    SNP                   = as.character(genome_snp),
+    snp_position_genome   = paste(position_vec, collapse = "|"),
+    snp_position_gene     = paste(snp_in_gene,  collapse = "|"),
+    Theoretical_Reference = paste(theo_refs,    collapse = "|"),
+    Gene                  = as.character(gene_name),
+    Product               = as.character(gene_product),
+    AA                    = aa_change,
+    SNP_Gene              = paste0(theo_refs[1], del_start, "del", n_comp, "bp")
+  )
+}
+
+# ---------------------------------------------------------------------------
+# Main orchestrator
+# ---------------------------------------------------------------------------
+
+snps.to.amino <- function(snp_db, ref_seq, cores = NULL) {
   reference    <- suppressWarnings(genbankr::readGenBank(ref_seq))
   Reference_DF <- data.frame(reference@cds)
 
-  # Convert Bioconductor CharacterLists to standard character vectors
   Reference_DF <- as.data.frame(lapply(Reference_DF, function(x) if (is.list(x)) sapply(x, paste, collapse = ";") else x))
   Reference_DF$experiment <- NULL
   Reference_DF$inference  <- NULL
@@ -48,12 +194,17 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
     ) %>%
     select(-.snp_row)
 
-  cl <- makeCluster(cores)
-  registerDoParallel(cl)
+  if (!is.null(cores) && cores > 1) {
+    cl <- makeCluster(cores)
+    registerDoParallel(cl)
+    on.exit(stopCluster(cl))
+  } else {
+    registerDoSEQ()
+  }
 
-  Temp <- foreach(SNP = 1:nrow(Amino_Acid_List), .combine = rbind) %dopar% {
-    library(dplyr)
-    library(Biostrings)
+  Temp <- foreach(SNP = 1:nrow(Amino_Acid_List), .combine = rbind,
+                  .export  = c(".translate_snp", ".translate_insertion", ".translate_deletion"),
+                  .packages = c("dplyr", "Biostrings")) %dopar% {
 
     GENOME_SNP   <- Amino_Acid_List$SNP[SNP]
     Components   <- Tokens_By_Row[[as.character(SNP)]]
@@ -70,156 +221,39 @@ snps.to.amino <- function(snp_db, ref_seq, cores = parallelly::availableCores())
     if (is_snp) {
       for (GENE in 1:nrow(Reference_DF)) {
         if (all(POSITION_vec >= Reference_DF$start[GENE] & POSITION_vec <= Reference_DF$end[GENE])) {
-
-          SNP_in_gene_vec <- (POSITION_vec - Reference_DF$start[GENE]) + 1
-          Reference_Seq   <- Biostrings::DNAString(Reference_DF$sequence[GENE])
-          Observed_Seq    <- Biostrings::DNAString(Reference_DF$sequence[GENE])
-
-          Theoretical_Ref_vec <- character(n_comp)
-          for (i in seq_len(n_comp)) {
-            Theoretical_Ref_vec[i] <- as.character(Reference_Seq[SNP_in_gene_vec[i]])
-            Observed_Seq[SNP_in_gene_vec[i]] <- MUTATION_vec[i]
-          }
-
-          MUTATION_out_vec <- MUTATION_vec
-
-          if (Reference_DF$strand[GENE] == "-") {
-            Reference_Seq <- Biostrings::reverseComplement(Reference_Seq)
-            Observed_Seq  <- Biostrings::reverseComplement(Observed_Seq)
-            for (i in seq_len(n_comp)) {
-              Theoretical_Ref_vec[i] <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(Theoretical_Ref_vec[i])))
-              MUTATION_out_vec[i]    <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(MUTATION_vec[i])))
-            }
-            SNP_in_gene_vec <- (Reference_DF$end[GENE] - POSITION_vec) + 1
-          }
-
-          AA_Seq      <- Biostrings::translate(Reference_Seq, if.fuzzy.codon = "solve")
-          AA_Observed <- Biostrings::translate(Observed_Seq,  if.fuzzy.codon = "solve")
-
-          Mutations <- Biostrings::pairwiseAlignment(AA_Seq, AA_Observed) %>%
-            Biostrings::mismatchTable() %>%
-            mutate(AA_Change = paste(Reference_DF$gene[GENE], ":", PatternSubstring,
-                                     PatternStart, SubjectSubstring, sep = ""))
-
-          SNP_Gene_vec <- paste0(Theoretical_Ref_vec, SNP_in_gene_vec, MUTATION_out_vec)
-
-          Out <- rbind(Out, data.frame(
-            SNP                   = as.character(GENOME_SNP),
-            snp_position_genome   = paste(POSITION_vec, collapse = "|"),
-            snp_position_gene     = paste(SNP_in_gene_vec, collapse = "|"),
-            Theoretical_Reference = paste(Theoretical_Ref_vec, collapse = "|"),
-            Gene                  = as.character(Reference_DF$gene[GENE]),
-            Product               = as.character(Reference_DF$product[GENE]),
-            AA                    = as.character(ifelse(
-              length(as.character(unique(Mutations$AA_Change))) > 0,
-              as.character(unique(Mutations$AA_Change)),
-              "Synonymous"
-            )),
-            SNP_Gene = paste(SNP_Gene_vec, collapse = "|")
+          Out <- rbind(Out, .translate_snp(
+            POSITION_vec, MUTATION_vec, GENOME_SNP,
+            Reference_DF$sequence[GENE], Reference_DF$start[GENE],
+            Reference_DF$end[GENE],      Reference_DF$strand[GENE],
+            Reference_DF$gene[GENE],     Reference_DF$product[GENE]
           ))
         }
       }
-
     } else if (is_insertion) {
       for (GENE in 1:nrow(Reference_DF)) {
         if (POSITION_vec[1] >= Reference_DF$start[GENE] & POSITION_vec[1] <= Reference_DF$end[GENE]) {
-
-          SNP_in_gene  <- (POSITION_vec[1] - Reference_DF$start[GENE]) + 1
-          ref_gene_str <- Reference_DF$sequence[GENE]
-          mut          <- MUTATION_vec[1]
-
-          Theoretical_Ref <- substr(ref_gene_str, SNP_in_gene, SNP_in_gene)
-          mut_out <- mut
-
-          if (Reference_DF$strand[GENE] == "-") {
-            ref_gene_str    <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_gene_str)))
-            SNP_in_gene     <- (Reference_DF$end[GENE] - POSITION_vec[1]) + 1
-            mut_out         <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(mut)))
-            Theoretical_Ref <- substr(ref_gene_str, SNP_in_gene, SNP_in_gene)
-          }
-
-          obs_gene_str <- paste0(substr(ref_gene_str, 1, SNP_in_gene - 1),
-                                  mut_out,
-                                  substr(ref_gene_str, SNP_in_gene + 1, nchar(ref_gene_str)))
-
-          AA_Seq_str <- as.character(Biostrings::translate(Biostrings::DNAString(ref_gene_str), if.fuzzy.codon = "solve"))
-          AA_Obs_str <- as.character(Biostrings::translate(Biostrings::DNAString(obs_gene_str),  if.fuzzy.codon = "solve"))
-
-          ins_bases <- substr(mut_out, 2, nchar(mut_out))
-
-          if (AA_Seq_str == AA_Obs_str) {
-            AA_Change <- "Synonymous"
-          } else {
-            n_min <- min(nchar(AA_Seq_str), nchar(AA_Obs_str))
-            first_diff <- n_min + 1
-            for (.i in seq_len(n_min)) {
-              if (substr(AA_Seq_str, .i, .i) != substr(AA_Obs_str, .i, .i)) { first_diff <- .i; break }
-            }
-            ins_len_aa <- nchar(AA_Obs_str) - nchar(AA_Seq_str)
-            ins_aa_str <- substr(AA_Obs_str, first_diff, first_diff + ins_len_aa - 1)
-            AA_Change  <- paste0(Reference_DF$gene[GENE], ":", first_diff, "ins", ins_aa_str)
-          }
-
-          Out <- rbind(Out, data.frame(
-            SNP                   = as.character(GENOME_SNP),
-            snp_position_genome   = as.character(POSITION_vec[1]),
-            snp_position_gene     = as.character(SNP_in_gene),
-            Theoretical_Reference = Theoretical_Ref,
-            Gene                  = as.character(Reference_DF$gene[GENE]),
-            Product               = as.character(Reference_DF$product[GENE]),
-            AA                    = AA_Change,
-            SNP_Gene              = paste0(Theoretical_Ref, SNP_in_gene, "ins", ins_bases)
+          Out <- rbind(Out, .translate_insertion(
+            POSITION_vec[1], MUTATION_vec[1], GENOME_SNP,
+            Reference_DF$sequence[GENE], Reference_DF$start[GENE],
+            Reference_DF$end[GENE],      Reference_DF$strand[GENE],
+            Reference_DF$gene[GENE],     Reference_DF$product[GENE]
           ))
         }
       }
-
     } else if (is_deletion) {
       for (GENE in 1:nrow(Reference_DF)) {
         if (all(POSITION_vec >= Reference_DF$start[GENE] & POSITION_vec <= Reference_DF$end[GENE])) {
-
-          SNP_in_gene_vec <- (POSITION_vec - Reference_DF$start[GENE]) + 1
-          ref_gene_str    <- Reference_DF$sequence[GENE]
-
-          Theoretical_Ref_vec <- sapply(SNP_in_gene_vec, function(p) substr(ref_gene_str, p, p))
-
-          if (Reference_DF$strand[GENE] == "-") {
-            ref_gene_str    <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_gene_str)))
-            SNP_in_gene_vec <- sort((Reference_DF$end[GENE] - POSITION_vec) + 1)
-            Theoretical_Ref_vec <- sapply(SNP_in_gene_vec, function(p) substr(ref_gene_str, p, p))
-          }
-
-          del_start <- min(SNP_in_gene_vec)
-          del_end   <- max(SNP_in_gene_vec)
-          obs_gene_str <- paste0(substr(ref_gene_str, 1, del_start - 1),
-                                  substr(ref_gene_str, del_end + 1, nchar(ref_gene_str)))
-
-          AA_Seq_str <- as.character(Biostrings::translate(Biostrings::DNAString(ref_gene_str), if.fuzzy.codon = "solve"))
-          AA_Obs_str <- as.character(Biostrings::translate(Biostrings::DNAString(obs_gene_str),  if.fuzzy.codon = "solve"))
-
-          del_aa_start <- ceiling(del_start / 3)
-          del_aa_end   <- ceiling(del_end   / 3)
-          del_aa_str   <- substr(AA_Seq_str, del_aa_start, del_aa_end)
-
-          AA_Change <- if (AA_Seq_str == AA_Obs_str) "Synonymous" else
-            paste0(Reference_DF$gene[GENE], ":", del_aa_str, del_aa_start, "del")
-
-          Out <- rbind(Out, data.frame(
-            SNP                   = as.character(GENOME_SNP),
-            snp_position_genome   = paste(POSITION_vec, collapse = "|"),
-            snp_position_gene     = paste(SNP_in_gene_vec, collapse = "|"),
-            Theoretical_Reference = paste(Theoretical_Ref_vec, collapse = "|"),
-            Gene                  = as.character(Reference_DF$gene[GENE]),
-            Product               = as.character(Reference_DF$product[GENE]),
-            AA                    = AA_Change,
-            SNP_Gene              = paste0(Theoretical_Ref_vec[1], del_start, "del", n_comp, "bp")
+          Out <- rbind(Out, .translate_deletion(
+            POSITION_vec, GENOME_SNP,
+            Reference_DF$sequence[GENE], Reference_DF$start[GENE],
+            Reference_DF$end[GENE],      Reference_DF$strand[GENE],
+            Reference_DF$gene[GENE],     Reference_DF$product[GENE]
           ))
         }
       }
     }
     Out
   }
-
-  stopCluster(cl)
 
   Out <- full_join(Amino_Acid_List, Temp)
 
