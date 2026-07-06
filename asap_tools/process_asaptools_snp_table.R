@@ -122,16 +122,18 @@ if (SNP_RDATA == "NULL" || !file.exists(SNP_RDATA) || is.null(SNP_RDATA)) {
 
 # Join info
 # Note depending on references there can be 2 records because of overlapping genes.
-AA_Merged <- left_join(Amino_Acids, Gene_SNPS, by = c("assay_name", "SNP"), relationship = "many-to-many") %>% 
-  distinct()
+AA_Merged <- left_join(Amino_Acids, Gene_SNPS, by = c("assay_name", "SNP"), relationship = "many-to-many") %>%
+  distinct() %>%
+  group_by(assay_name, SNP) %>%
+  summarise(across(everything(), ~ paste(unique(na.omit(.x)), collapse = "; ")), .groups = "drop")
 
-SNPS <- left_join(SNPS, AA_Merged, by = c("assay_name", "SNP"), relationship = "many-to-many")
+SNPS <- left_join(SNPS, AA_Merged, by = c("assay_name", "SNP"))
 
 ######################
 # SNP QC & Sample Exclusion
 ######################
 SAMPLE_Exclude <- SNPS %>%
-  filter(snp_proportion > MIN_SNP_PERC, location_depth > MIN_LOCATION_DEPTH) %>%
+  filter(snp_proportion > MIN_SNP_PERC, location_depth >= MIN_LOCATION_DEPTH) %>%
   group_by(assay_name, name) %>%
   tally() %>%
   filter(n > MAX_SNP_COUNT) %>%
@@ -160,7 +162,7 @@ generate_SNP_table <- function(include_only = TRUE) {
   # These are coordinates where at least one sample passed your QC filters
   sig_positions <- SNPS %>%
     filter(as.numeric(snp_proportion) > MIN_SNP_PERC,
-           as.numeric(location_depth) > MIN_LOCATION_DEPTH,
+           as.numeric(location_depth) >= MIN_LOCATION_DEPTH,
            as.numeric(snp_position) %in% positions_of_interest) %>%
     {if (length(valid_refs) > 0) filter(., grepl(paste(valid_refs, collapse="|"), assay_name)) else .} %>%
     select(assay_name, snp_position, SNP, any_of(c("AA", "Gene_SNP", "Gene", "Product"))) %>%
@@ -192,7 +194,7 @@ generate_SNP_table <- function(include_only = TRUE) {
     mutate(
       snp_prop_final = case_when(
         # CONDITION 1: Depth is too low -> Identify as No Data (NA)
-        depth <= MIN_LOCATION_DEPTH ~ paste0("Low Coverage [SNP:", round(snp_proportion, 2), "%, Depth:", depth, "Depth Threshold:", MIN_LOCATION_DEPTH,"]"),
+        depth < MIN_LOCATION_DEPTH ~ paste0("Low Coverage [SNP:", round(snp_proportion, 2), "%, Depth:", depth, "Depth Threshold:", MIN_LOCATION_DEPTH,"]"),
         
         # CONDITION 2: Depth is good and SNP exists or is 0 -> Identify as Variant (%)
         TRUE ~ as.character(round(snp_proportion, 2))
@@ -223,6 +225,8 @@ generate_SNP_table <- function(include_only = TRUE) {
   }
 
   #6. Pivot to Wide format
+  # group_by+summarise collapses multi-gene rows (SNP overlapping 2 CDS regions)
+  # so pivot_wider never sees duplicate (id_cols, Sample) pairs -> no list columns
   Wide <- Background %>%
     select(Run = run,
            Assay = assay_name,
@@ -233,12 +237,14 @@ generate_SNP_table <- function(include_only = TRUE) {
            `Amino Acid Change` = any_of("AA"),
            `Primer Region` = Primer,
            `SNP Proportion (%)` = snp_prop_final) %>%
-    distinct() %>%
+    group_by(Run, Assay, Sample, `SNP (Genome)`, `Primer Region`, `SNP Proportion (%)`) %>%
+    summarise(across(everything(), ~ paste(unique(na.omit(.x)), collapse = "; ")),
+              .groups = "drop") %>%
     pivot_wider(names_from = Sample, values_from = `SNP Proportion (%)`)
   
   # 7. Return linelist of SNPS
   SNP_Linelist <- Background %>% 
-    filter(depth > MIN_LOCATION_DEPTH) %>% # Reversed logic for clarity: keep if > min
+    filter(depth >= MIN_LOCATION_DEPTH) %>%
     filter(snp_proportion > MIN_SNP_PERC) %>% 
     filter(SNP %in% sig_positions$SNP)
   
@@ -247,7 +253,7 @@ generate_SNP_table <- function(include_only = TRUE) {
   if (!"AA" %in% names(Background)) Background$AA <- "No GB file provided."
   
   SNP_Linelist <- Background %>% 
-    filter(!depth <= MIN_LOCATION_DEPTH) %>% # Filter Low Depth Samples
+    filter(depth >= MIN_LOCATION_DEPTH) %>%
     filter(snp_proportion > MIN_SNP_PERC) %>% 
     filter(`SNP` %in% sig_positions$SNP) %>% 
     select(run, assay_name, name, `Primer Region` = Primer, `SNP (Genome)` = SNP, Gene, `SNP (Gene)` = `Gene_SNP`, `Amino Acid Change` = AA, `SNP Depth` = snp_depth, `Location Depth` = depth, `SNP Prevalence` = snp_prop_final,

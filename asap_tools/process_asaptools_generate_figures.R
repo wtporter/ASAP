@@ -4,37 +4,39 @@ library(tidyverse)
 library(openxlsx)
 library(plotly)
 library(htmlwidgets)
-library(zoo) # Required for rolling averages
+library(zoo)
+library(patchwork)
 
 args <- commandArgs(trailingOnly = TRUE)
 
 if (length(args) < 3) {
-  stop("Usage: generate_qc_plots.R <rdata> <prefix> <poi_csv>")
+  stop("Usage: process_asaptools_generate_figures.R <rdata> <prefix> <poi_csv> [<snp_threshold>] [<snp_depth>]")
 }
 
-RDATA_INPUT <- args[1]
-PREFIX      <- args[2]
-POI_CSV     <- args[3]
-SNP_THRESHOLD <- as.numeric(args[4])
-SNP_DEPTH     <- as.numeric(args[5])
+RDATA_INPUT   <- args[1]
+PREFIX        <- args[2]
+POI_CSV       <- args[3]
+SNP_THRESHOLD <- if (length(args) >= 4 && !args[4] %in% c("NULL", "NA", "")) as.numeric(args[4]) else 0.03
+MIN_DEPTH     <- if (length(args) >= 5 && !args[5] %in% c("NULL", "NA", "")) as.numeric(args[5]) else 100
 
-# RDATA_INPUT <- "/tgen_labs/EPIC/tporter/ASAP/nextflow/.nf-test/tests/2389292981cc5fccac0b4b3f37a2bd62/work/f8/c0fa4c75174729c411a3fa2129f452/Combined_ASAP_Data.Rdata"
-# PREFIX      <- "Test"
-# POI_CSV     <- "/tgen_labs/EPIC/tporter/ASAP/nextflow/tests/Genes_Of_Interest/H37Rv_Genes_Of_Interst.csv"
-# SNP_THRESHOLD <- 0.0001
-# SNP_DEPTH <- 499
-  
+# Wraps a plot block so a single failure doesn't abort all plots
+safe_plot <- function(label, expr) {
+  tryCatch(expr, error = function(e) {
+    message(sprintf("[WARN] %s failed: %s", label, conditionMessage(e)))
+  })
+}
+
+# Word-wrap caption text; preserves existing \n paragraph breaks
+wrap_cap <- function(txt, w = 110) {
+  paste(sapply(strsplit(txt, "\n")[[1]], stringr::str_wrap, width = w), collapse = "\n")
+}
+
 load(RDATA_INPUT)
 
 array_info <- final_array
 
-SNPS <- final_snps
-
 # Join metadata
 array_info <- left_join(array_info, select(final_asap, run, assay_name, name, amplicon_reads, avg_depth, breadth))
-
-SNPS <- full_join(select(final_array, run, name, assay_name, position, depth), SNPS, by = c("run", "name", "assay_name", "position" = "snp_position")) 
-SNPS$snp_distribution[is.na(SNPS$snp_distribution)] <- "A=0, T=0, C=0, G=0, _=0"
 
 # --- Handle Positions of Interest ---
 if (!(POI_CSV %in% c("NA", "NULL", "", NA))) {
@@ -43,155 +45,302 @@ if (!(POI_CSV %in% c("NA", "NULL", "", NA))) {
   genes_expanded <- genes_poi %>%
     rowwise() %>%
     reframe(
-      # Keep original metadata
-      X = X,
+      X          = X,
       assay_name = seqnames,
-      strand = strand,
-      type = type,
-      gene = gene,
-      # Generate the sequence of positions
-      position = get_positions(start, end)
+      strand     = strand,
+      type       = type,
+      gene       = gene,
+      position   = get_positions(start, end)
     )
-  
+
   array_info <- genes_expanded %>%
     select(assay_name, position, gene) %>%
     inner_join(array_info, by = c("assay_name", "position")) %>%
     mutate(assay_name = paste(assay_name, "-", gene, sep = ""))
-  
-  SNPS <- genes_expanded %>%
-    select(assay_name, position, gene) %>%
-    inner_join(SNPS, by = c("assay_name", "position")) %>%
-    mutate(assay_name = paste(assay_name, "-", gene, sep = ""))
-  
 }
-
 
 # Dynamic plot data reduction
 target_points <- 10000
-total_span <- length(unique(array_info$position))
-dynamic_k <- max(1, floor(total_span / target_points))
+total_span    <- length(unique(array_info$position))
+dynamic_k     <- max(1, floor(total_span / target_points))
 
-
-# --- Create Averaged Dataset for Interactive Plots ---
-# This calculates the mean of every 10 base pairs to shrink the object size
+# Rolling average dataset for coverage/N-read plots
 array_avg <- array_info %>%
   group_by(name, assay_name) %>%
   arrange(position) %>%
   mutate(
-    depth_avg = rollmean(depth, k = dynamic_k, fill = NA),
+    depth_avg    = rollmean(depth, k = dynamic_k, fill = NA),
     n_reads_prop = rollmean(100 * (n_reads / depth), k = dynamic_k, fill = NA)
   ) %>%
   filter(!is.na(depth_avg)) %>%
-  # Use the dynamic_k to slice the data
   filter(row_number() %% dynamic_k == 0)
 
-# --- Plot 1: Coverage Depth (Interactive) ---
-p_cov <- array_avg %>% 
-  ggplot(aes(x = position, y = depth_avg, col = name, group = name,
-             text = paste0("Sample: ", name,
-                           "<br>~Position: ", position,
-                           "<br>Mean Depth (10bp): ", round(depth_avg, 1)))) +
-    geom_line(alpha = 0.7) + 
-    geom_hline(yintercept = SNP_DEPTH, col = "Red", lty = "dashed", alpha = 0.6)+
+# --- Plot 1: Coverage Depth ---
+safe_plot("Coverage Depth", {
+  p_cov <- array_avg %>%
+    ggplot(aes(x = position, y = depth_avg, col = name, group = name,
+               text = paste0("Sample: ", name,
+                             "<br>~Position: ", position,
+                             "<br>Mean Depth (10bp): ", round(depth_avg, 1)))) +
+      geom_line(alpha = 0.7) +
+      geom_hline(yintercept = MIN_DEPTH, col = "Red", lty = "dashed", alpha = 0.6) +
+      facet_wrap(~assay_name, scales = "free") +
+      scale_y_log10() +
+      theme_bw() +
+      theme(legend.position = "none") +
+      labs(
+        title    = "Reference Depth of Coverage",
+        subtitle = paste0("Red dashed line = minimum depth (", MIN_DEPTH, "x) required for SNP calls. Each line = one sample."),
+        caption  = wrap_cap("Mean sequencing depth (log10 scale) per reference position, smoothed over a rolling window. Each line represents one sample. Depth is derived from reads aligned to the reference. Positions below the red dashed line do not meet the minimum depth threshold for SNP calling."),
+        y = paste0("Mean Coverage Depth (", dynamic_k, "bp window, log10 scaled)"),
+        x = "Reference Position (BP)"
+      ) +
+      theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
+
+  ggsave(paste0(PREFIX, "_QC_coverage_depth.jpg"), plot = p_cov, width = 12, height = 8, dpi = 300)
+  interactive_plot_coverage <- ggplotly(p_cov, tooltip = "text") %>% partial_bundle()
+  saveWidget(interactive_plot_coverage, paste0(PREFIX, "_QC_coverage_depth.html"), selfcontained = TRUE)
+})
+
+# --- Plot 2: N Read Proportion ---
+safe_plot("N Read Proportion", {
+  p_n <- array_avg %>%
+    ggplot(aes(x = position, y = n_reads_prop, col = name, group = name,
+               text = paste0("Sample: ", name,
+                             "<br>~Position: ", position,
+                             "<br>Proporion 'N' Reads (10bp window): ", round(n_reads_prop, 1)))) +
+    geom_line(alpha = 0.7) +
     facet_wrap(~assay_name, scales = "free") +
-    scale_y_log10() +
     theme_bw() +
     theme(legend.position = "none") +
-    labs(
-      title = "Reference Depth of Coverage",
-      subtitle = paste0("Note: Red dashed line indicates minimum depth (", SNP_DEPTH, "x) for SNP calls."),
-      y = paste0("Mean Coverage Depth (", dynamic_k, "bp window, log10 scaled)"),
-      x = "Reference Position (BP)"
+    labs(y = paste0("Proportion 'N' Reads (", dynamic_k, "bp window)"),
+         x = "Reference Position (BP)",
+         title = "Percent Reads with 'N's across Reference",
+         subtitle = "'N' bases accumulate from base quality masking, primer masking, and SMOR deduplication.",
+         caption = wrap_cap("Percentage of reads carrying 'N' bases at each reference position, smoothed over a rolling window. 'N' bases are contributed by base quality masking, primer sequence masking, and SMOR deduplication masking.")) +
+    theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
+
+  ggsave(paste0(PREFIX, "_QC_n_reads_proportion.jpg"), plot = p_n, width = 12, height = 8, dpi = 300)
+  interactive_plot_n_reads <- ggplotly(p_n, tooltip = "text") %>% partial_bundle()
+  saveWidget(interactive_plot_n_reads, paste0(PREFIX, "_QC_n_reads_proportion.html"), selfcontained = TRUE)
+})
+
+# --- Plot 3: Breadth of Coverage Heatmap ---
+safe_plot("Breadth Heatmap", {
+  breadth_data <- final_asap %>%
+    select(name, assay_name, breadth) %>%
+    mutate(breadth = as.numeric(breadth))
+
+  p_breadth <- breadth_data %>%
+    ggplot(aes(x = assay_name, y = name, fill = breadth,
+               text = paste0("Sample: ", name,
+                             "<br>Assay: ", assay_name,
+                             "<br>Breadth: ", round(breadth, 1), "%"))) +
+    geom_tile(color = "white") +
+    scale_fill_gradient(low = "white", high = "#2ecc71", limits = c(0, 100),
+                        name = paste0("Breadth\n(%, ≥", MIN_DEPTH, "x)")) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "Breadth of Coverage per Sample and Amplicon",
+         subtitle = paste0("Proportion of amplicon positions with ASAP depth ≥ ", MIN_DEPTH,
+                           "x. White = no coverage, green = full coverage."),
+         caption  = wrap_cap(paste0(
+           "Breadth of coverage per sample and amplicon as computed by ASAP, reflecting positions ",
+           "with at least ", MIN_DEPTH, "x depth (--depth) from reads passing all pipeline filters ",
+           "(primer matching, identity threshold, SMOR deduplication). ",
+           "Values range from 0% (no positions meet threshold) to 100% (all positions meet threshold)."
+         )),
+         x = "Assay", y = "Sample") +
+    theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
+
+  ggsave(paste0(PREFIX, "_Breadth_coverage_heatmap.jpg"), plot = p_breadth, width = 12, height = 8, dpi = 300)
+  interactive_breadth <- ggplotly(p_breadth, tooltip = "text") %>% partial_bundle()
+  saveWidget(interactive_breadth, paste0(PREFIX, "_Breadth_coverage_heatmap.html"), selfcontained = TRUE)
+})
+
+# --- Plot 4: Alignment Summary (counts + percentage panels) ---
+safe_plot("Alignment Summary", {
+  align_data <- final_asap %>%
+    select(name, total_reads, trimmed_reads, mapped_reads, unassigned_reads, unmapped_reads) %>%
+    distinct() %>%
+    mutate(
+      across(c(total_reads, trimmed_reads, mapped_reads, unassigned_reads, unmapped_reads), as.numeric),
+      lost_fastp = pmax(0, total_reads - trimmed_reads),
+      lost_other = pmax(0, trimmed_reads - mapped_reads - unassigned_reads - unmapped_reads)
+    ) %>%
+    select(name, total_reads,
+           "Aligned"          = mapped_reads,
+           "Unassigned"       = unassigned_reads,
+           "Unmapped"         = unmapped_reads,
+           "Other"            = lost_other,
+           "Removed by FastP" = lost_fastp) %>%
+    pivot_longer(-c(name, total_reads), names_to = "Category", values_to = "Reads") %>%
+    mutate(
+      Category = factor(Category, levels = c("Aligned", "Unassigned", "Unmapped",
+                                             "Other", "Removed by FastP")),
+      Percent  = 100 * Reads / total_reads
+    ) %>%
+    filter(!is.na(Reads), Reads > 0)
+
+  align_colours <- c("Aligned"          = "#2ecc71",
+                     "Unassigned"       = "#f1c40f",
+                     "Unmapped"         = "#e74c3c",
+                     "Other"            = "#95a5a6",
+                     "Removed by FastP" = "#bdc3c7")
+
+  align_base_theme <- theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "bottom")
+
+  p_align <- align_data %>%
+    ggplot(aes(x = name, y = Reads, fill = Category,
+               text = paste0("Sample: ", name,
+                             "<br>Category: ", Category,
+                             "<br>Reads: ", scales::comma(Reads)))) +
+    geom_col() +
+    scale_y_continuous(labels = scales::comma) +
+    scale_fill_manual(values = align_colours) +
+    align_base_theme +
+    labs(title = "Read Counts", x = "Sample", y = "Read Count", fill = NULL)
+
+  p_align_pct <- align_data %>%
+    ggplot(aes(x = name, y = Percent, fill = Category,
+               text = paste0("Sample: ", name,
+                             "<br>Category: ", Category,
+                             "<br>Percent: ", round(Percent, 1), "%"))) +
+    geom_col() +
+    scale_y_continuous(labels = function(x) paste0(x, "%"), limits = c(0, 100)) +
+    scale_fill_manual(values = align_colours) +
+    align_base_theme +
+    labs(title = "Percentage of Reads", x = "Sample", y = "Percentage (%)", fill = NULL)
+
+  p_align_combined <- (p_align + p_align_pct) +
+    plot_layout(guides = "collect") &
+    theme(legend.position = "bottom")
+  p_align_combined <- p_align_combined + plot_annotation(
+    title      = "Alignment Summary",
+    subtitle   = "Bar height = total reads (pre-trim). Colors show read fate through FastP trimming and alignment.",
+    tag_levels = "A",
+    caption    = wrap_cap(paste(
+      "(A) Total read count per sample stacked by alignment outcome. Bar height = total reads before FastP trimming. Categories: Aligned = reads mapped to a known amplicon; Unassigned = mapped but not assigned to an amplicon; Unmapped = did not align to the reference; Removed by FastP = discarded during adapter/quality trimming; Other = reads not accounted for by the above categories.",
+      "(B) Same data expressed as a percentage of total pre-trim reads per sample.",
+      sep = "\n"
+    ), w = 150),
+    theme = theme(
+      plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.4),
+      plot.tag     = element_text(face = "bold", size = 12)
+    )
+  )
+
+  ggsave(paste0(PREFIX, "_QC_alignment_summary.jpg"), plot = p_align_combined,
+         width = 18, height = 8, dpi = 300)
+  interactive_align <- subplot(
+    ggplotly(p_align,     tooltip = "text") %>% partial_bundle(),
+    ggplotly(p_align_pct, tooltip = "text") %>% partial_bundle(),
+    nrows = 1, shareY = FALSE, titleX = TRUE, titleY = TRUE
+  ) %>% layout(title = "Alignment Summary")
+  saveWidget(interactive_align, paste0(PREFIX, "_QC_alignment_summary.html"), selfcontained = TRUE)
+})
+
+# --- Plot 5: Read Funnel (counts + percentage panels) ---
+safe_plot("Read Funnel", {
+  funnel_data <- final_asap %>%
+    select(name, assay_name,
+           aligned_reads, no_primer_reads,
+           identity_discarded,
+           smor_pairs_dropped,
+           amplicon_reads) %>%
+    mutate(
+      across(c(aligned_reads, no_primer_reads, identity_discarded,
+               smor_pairs_dropped, amplicon_reads), as.numeric),
+      lost_smor     = smor_pairs_dropped,
+      lost_identity = identity_discarded,
+      lost_primer   = no_primer_reads,
+      kept          = amplicon_reads,
+      lost_other    = pmax(0, aligned_reads - kept - lost_smor - lost_identity - lost_primer)
     )
 
-p_cov
+  fate_levels  <- c("Lost: No Primer", "Lost: Identity Filter",
+                    "Lost: SMOR", "Lost: Other", "Final Reads")
+  fate_colours <- c("Lost: No Primer"        = "#e74c3c",
+                    "Lost: Identity Filter"   = "#e67e22",
+                    "Lost: SMOR"              = "#f1c40f",
+                    "Lost: Other"             = "#95a5a6",
+                    "Final Reads"             = "#2ecc71")
 
-# Save Static (Full Data)
-ggsave(paste0(PREFIX, "_coverage_depth.jpg"), width = 12, height = 8, dpi = 300)
+  funnel_long <- funnel_data %>%
+    select(name, assay_name,
+           "Lost: No Primer"       = lost_primer,
+           "Lost: Identity Filter" = lost_identity,
+           "Lost: SMOR"            = lost_smor,
+           "Lost: Other"           = lost_other,
+           "Final Reads"           = kept) %>%
+    pivot_longer(-c(name, assay_name), names_to = "Fate", values_to = "Reads") %>%
+    mutate(Fate = factor(Fate, levels = fate_levels)) %>%
+    filter(!is.na(Reads))
 
-# Save Interactive (Averaged Data)
-interactive_plot_coverage <- ggplotly(p_cov, tooltip = "text") %>% partial_bundle()
-saveWidget(interactive_plot_coverage, paste0(PREFIX, "_coverage_depth.html"), selfcontained = TRUE)
+  funnel_totals <- funnel_long %>%
+    group_by(name, assay_name) %>%
+    summarise(total_aligned = sum(Reads, na.rm = TRUE), .groups = "drop")
 
-# --- Plot 2: N Read Proportion (Interactive) ---
-p_n <- array_avg %>% 
-  ggplot(aes(x = position, y = n_reads_prop, col = name, group = name,
-             text = paste0("Sample: ", name,
-                           "<br>~Position: ", position,
-                           "<br>Proporion 'N' Reads (10bp window): ", round(n_reads_prop, 1)))) +
-  geom_line(alpha = 0.7) + 
-  facet_wrap(~assay_name, scales = "free") +
-  theme_bw() +
-  theme(legend.position = "none") +
-  labs(y = paste0("Proporion 'N' Reads (", dynamic_k, "bp window, log10 scaled)"),
-       x = "Reference Position (BP)",
-       title = "Percent Reads with 'N's across Reference",
-       subtitle = "Note: 'N's are accumulated from QC, primer masking, and SMOR masking/correction.",)
+  funnel_long <- funnel_long %>%
+    left_join(funnel_totals, by = c("name", "assay_name")) %>%
+    mutate(Percent = if_else(total_aligned == 0, 0, 100 * Reads / total_aligned))
 
-p_n
+  funnel_base_theme <- theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "bottom")
 
-# Save Static (Full Data)
-ggsave(paste0(PREFIX, "_n_reads_prop.jpg"), width = 12, height = 8, dpi = 300)
+  p_funnel <- funnel_long %>%
+    filter(Reads > 0) %>%
+    ggplot(aes(x = name, y = Reads, fill = Fate,
+               text = paste0("Sample: ", name,
+                             "<br>Fate: ", Fate,
+                             "<br>Reads: ", scales::comma(Reads)))) +
+    geom_col() +
+    facet_wrap(~assay_name, scales = "free") +
+    scale_y_continuous(labels = scales::comma) +
+    scale_fill_manual(values = fate_colours) +
+    funnel_base_theme +
+    labs(title = "Read Counts", x = "Sample", y = "Read Count", fill = NULL)
 
-# Save Interactive (Averaged Data)
-interactive_plot_n_reads <- ggplotly(p_n, tooltip = "text") %>% partial_bundle()
-saveWidget(interactive_plot_n_reads, paste0(PREFIX, "_n_reads_prop.html"), selfcontained = TRUE)
+  p_funnel_pct <- funnel_long %>%
+    ggplot(aes(x = name, y = Percent, fill = Fate,
+               text = paste0("Sample: ", name,
+                             "<br>Fate: ", Fate,
+                             "<br>Percent: ", round(Percent, 1), "%"))) +
+    geom_col() +
+    facet_wrap(~assay_name, scales = "free_x") +
+    scale_y_continuous(labels = function(x) paste0(x, "%"), limits = c(0, 100)) +
+    scale_fill_manual(values = fate_colours) +
+    funnel_base_theme +
+    labs(title = "Percentage of Aligned Reads", x = "Sample", y = "Percentage (%)", fill = NULL)
 
-# --- Plot 3: SNP Locations (Interactive) ---
-SNPS <- SNPS %>% mutate(space_count = str_count(snp_distribution, " "))
-max_spaces <- max(SNPS$space_count, na.rm = TRUE)
+  p_funnel_combined <- (p_funnel / p_funnel_pct) +
+    plot_layout(guides = "collect") &
+    theme(legend.position = "bottom")
+  p_funnel_combined <- p_funnel_combined + plot_annotation(
+    title      = "Read Fate per Amplicon",
+    subtitle   = "Bar height = reads aligned to amplicon. Colors show where reads were removed or retained.",
+    tag_levels = "A",
+    caption    = wrap_cap(paste(
+      "(A) Read counts per amplicon per sample stacked by filtering fate. Bar height = total reads aligned to the amplicon.",
+      "(B) Same data as percentage of aligned reads per amplicon.",
+      "Categories — Lost:No Primer: primer sequence not detected in read; Lost:Identity: read pair did not meet percent-identity threshold; Lost:SMOR: duplicate pair removed by SMOR deduplication; Lost:Other: reads not accounted for by the above filters; Final Reads: reads passing all filters and counted as amplicon_reads.",
+      sep = "\n"
+    ), w = 120),
+    theme = theme(
+      plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.4),
+      plot.tag     = element_text(face = "bold", size = 12)
+    )
+  )
 
-SNPS <- SNPS %>%
-  relocate(snp_distribution, .after = last_col()) %>%
-  separate(snp_distribution, into = paste0("Dist", 1:(1 + max_spaces)), sep = ", ", fill = "right") %>%
-  pivot_longer(starts_with("Dist"), names_to = "Temp", values_to = "Dist") %>%
-  select(-Temp) %>%
-  filter(!is.na(Dist)) %>%
-  separate(Dist, into = c("Call", "n"), sep = "=") %>%
-  mutate(snp_proportion = 100*(as.numeric(n)/as.numeric(location_depth))) %>%
-  mutate(SNP = paste0(snp_reference, position, Call)) %>%
-  filter(snp_reference != Call) %>%
-  filter(!is.na(snp_proportion))
-
-SNPS <- SNPS %>% 
-  filter(depth > SNP_DEPTH)
-
-SNPS$snp_proportion[is.na(SNPS$snp_proportion)] <- 0
-
-SNP_Plot_Data <- SNPS %>% 
-  group_by(name, assay_name, position) %>% 
-  summarise(Max_SNP_proportion = max(snp_proportion))
-  
-SNP_Plot_Data_Mean <- SNP_Plot_Data %>% 
-  group_by(assay_name, position) %>% 
-  summarise(Mean_SNP_proportion = mean(Max_SNP_proportion, na.rm = TRUE), .groups = "drop")
-
-p_SNP <- SNP_Plot_Data %>% 
-  ggplot(aes(x = position, y = Max_SNP_proportion, col = name, group = name,
-             text = paste0("Sample: ", name,
-                           "<br>~Position: ", position,
-                           "<br>Max SNP Proportion: ", round(Max_SNP_proportion, 1)))) +
-  geom_line(alpha = 0.7) + 
-  # Set inherit.aes = FALSE or manually reset col/group to prevent the 'name' error
-  geom_line(data = SNP_Plot_Data_Mean, 
-            aes(x = position, y = Mean_SNP_proportion), 
-            col = "black", 
-            lty = "dashed", 
-            inherit.aes = FALSE) + 
-  facet_wrap(~assay_name, scales = "free") +
-  theme_bw() +
-  theme(legend.position = "none") +
-  labs(y = "Max SNP Prevalence (%)",
-       x = "Reference Position (BP)",
-       title = "SNP prevalence (%) across reference sequences",
-       subtitle = "Note: SNPs are expanded and filtered based on user specified SNP thresholds and depths.")
-
-p_SNP
-
-# Save Static (Full Data)
-ggsave(paste0(PREFIX, "_SNP_prop.jpg"), width = 12, height = 8, dpi = 300)
-
-# Save Interactive (Averaged Data)
-interactive_plot_SNP <- ggplotly(p_SNP, tooltip = "text") %>% partial_bundle()
-saveWidget(interactive_plot_SNP, paste0(PREFIX, "_SNP_prop.html"), selfcontained = TRUE)
-
+  ggsave(paste0(PREFIX, "_QC_read_funnel.jpg"), plot = p_funnel_combined,
+         width = 14, height = 14, dpi = 300)
+  interactive_funnel <- subplot(
+    ggplotly(p_funnel,     tooltip = "text") %>% partial_bundle(),
+    ggplotly(p_funnel_pct, tooltip = "text") %>% partial_bundle(),
+    nrows = 2, shareX = FALSE, shareY = FALSE, titleX = TRUE, titleY = TRUE
+  ) %>% layout(title = "Read Fate per Amplicon")
+  saveWidget(interactive_funnel, paste0(PREFIX, "_QC_read_funnel.html"), selfcontained = TRUE)
+})

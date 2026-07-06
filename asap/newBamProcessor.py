@@ -125,8 +125,8 @@ def _get_n_counts(pileup_iterator, amplicon_length):
                 
                 processed_alignments.add(alignment_id)
 
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"Skipped read in _get_n_counts: {e}")
 
     return n_read_array
 
@@ -173,8 +173,12 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
                 if pileupread.is_del:
                     #This position in the alignment is a deletion in the query sequence, therefore it has no quality score
                     # Let's use the average of the quality scores of the two aligned bases flanking the deletion
-                    qscore = (pileupread.alignment.query_qualities[pileupread.query_position_or_next] +
-                              pileupread.alignment.query_qualities[pileupread.query_position_or_next - 1]) / 2
+                    quals = pileupread.alignment.query_qualities
+                    q_next = pileupread.query_position_or_next
+                    q_prev = q_next - 1
+                    q_next = min(q_next, len(quals) - 1)
+                    q_prev = max(q_prev, 0)
+                    qscore = (quals[q_next] + quals[q_prev]) / 2
                     if qscore >= base_qual:
                         passed_Qual_filter += 1
                         base_counter.update({"_": 1})

@@ -179,11 +179,11 @@ trimmer JSON, and alignment flagstats into a QC report.
 |---|---|---|---|---|
 | `PROCESS_XML_R` | `process_xml.R` | per-sample XML, min proportion | `{id}_XML_Data.Rdata`, `{id}_Summary.csv` | `params.proportion` |
 | `PROCESS_COMBINE_RDATA` | `process_combine_rdata.R` | all Rdata files (gathered), optional POI CSV | `{name}_ASAP_Data.Rdata`, `{name}_Summary.csv` | `params.asaptools_positions_of_interest`, `params.file_name` |
-| `PROCESS_GENERATE_COV_TABLE` | `process_asaptools_cov_table.R` | combined Rdata | `*_Coverage_Report.xlsx` | `params.asaptools_cov_table`, `params.asaptools_min_location_depth` |
+| `PROCESS_GENERATE_COV_TABLE` | `process_asaptools_cov_table.R` | combined Rdata | `*_Coverage_Report.xlsx` | `params.asaptools_cov_table`, `params.depth` |
 | `PROCESS_QC_PLOTS` | `process_asaptools_generate_figures.R` | combined Rdata | `*.html`, `*.jpg` (3 × 2) | `params.asaptools_qc_plots` |
 | `PROCESS_GENERATE_FASTA` | `process_asaptools_fasta_export.R` | combined Rdata | `*_{assay}.fasta` (one per assay) | `params.asaptools_generate_fasta`, `params.asaptools_breadth_threshold` |
 | `PROCESS_SNPS_TO_AMINOACIDS` | `process_asaptools_snps_amino_acids.R` | combined Rdata, GenBank file(s) | `SNP_Amino_Acid_Table.Rdata` | `params.asaptools_snp_table` + GenBank present |
-| `PROCESS_GENERATE_SNP_TABLE` | `process_asaptools_snp_table.R` | combined Rdata, AA Rdata, optional GenBank/BED/POI | `*_SNP_Table_*.csv` (4 files), optional `*.xlsx` | `params.asaptools_snp_table`, `params.asaptools_snp_proportion`, `params.asaptools_max_sample_snp_count`, `params.asaptools_min_location_depth`, `params.asaptools_snp_table_xls` |
+| `PROCESS_GENERATE_SNP_TABLE` | `process_asaptools_snp_table.R` | combined Rdata, AA Rdata, optional GenBank/BED/POI | `*_SNP_Table_*.csv` (4 files), optional `*.xlsx` | `params.asaptools_snp_table`, `params.asaptools_snp_proportion`, `params.asaptools_max_sample_snp_count`, `params.depth`, `params.asaptools_snp_table_xls` |
 
 ---
 

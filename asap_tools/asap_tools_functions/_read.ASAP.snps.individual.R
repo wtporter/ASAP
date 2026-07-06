@@ -102,6 +102,11 @@ read.ASAP.snps.individual <- function(XML) {
               linked_snp_co_counts     <- NA_character_
               linked_snp_shared_depths <- NA_character_
             }
+          } else {
+            linked_snp_targets       <- NA_character_
+            linked_snp_linkage_pcts  <- NA_character_
+            linked_snp_co_counts     <- NA_character_
+            linked_snp_shared_depths <- NA_character_
           }
 
           snp_ref <- xml_attr(SNP_Node, "reference")
@@ -161,14 +166,12 @@ read.ASAP.snps.individual <- function(XML) {
             snp_ref_qual_min         = snp_ref_qual_min,
             snp_ref_qual_max         = snp_ref_qual_max,
             snp_call_R1              = snp_call_R1,
-            snp_call_R2              = snp_call_R2
+            snp_call_R2              = snp_call_R2,
+            linked_snp_targets       = linked_snp_targets,
+            linked_snp_linkage_pcts  = linked_snp_linkage_pcts,
+            linked_snp_co_counts     = linked_snp_co_counts,
+            linked_snp_shared_depths = linked_snp_shared_depths
           )
-          if (has_linked_snp) {
-            SNP_Info$linked_snp_targets       <- linked_snp_targets
-            SNP_Info$linked_snp_linkage_pcts  <- linked_snp_linkage_pcts
-            SNP_Info$linked_snp_co_counts     <- linked_snp_co_counts
-            SNP_Info$linked_snp_shared_depths <- linked_snp_shared_depths
-          }
 
           Temp <- cbind(Run_Info, Sample_Info, Assay_Info, Amplicon_Info, SNP_Info)
           Out  <- rbind(Out, Temp)

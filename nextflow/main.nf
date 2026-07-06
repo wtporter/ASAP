@@ -16,7 +16,7 @@ include {
     PREPARE_ASAP_JSON; GENERATE_REFERENCE_FASTA; MASK_PRIMERS; IDENTITY_FILTER; SMOR; SMOR_CORRECTION;
     PROCESS_BAM; OUTPUT_COMBINER; FORMAT_OUTPUT
 } from './modules/asap'
-include { PROCESS_XML_R; PROCESS_COMBINE_RDATA; PROCESS_GENERATE_COV_TABLE; PROCESS_GENERATE_FASTA; PROCESS_GENERATE_SNP_TABLE; PROCESS_SNPS_TO_AMINOACIDS; PROCESS_QC_PLOTS} from './modules/asap_tools'
+include { PROCESS_XML_R; PROCESS_COMBINE_RDATA; PROCESS_GENERATE_COV_TABLE; PROCESS_GENERATE_FASTA; PROCESS_GENERATE_SNP_TABLE; PROCESS_SNPS_TO_AMINOACIDS; PROCESS_QC_PLOTS; PROCESS_SNP_PLOTS; PROCESS_FASTP_PANEL } from './modules/asap_tools'
 include { IVAR_TRIM } from './modules/ivar/trim/'
 include { IVAR_VARIANTS } from './modules/ivar/variants/'
 include { IVAR_CONSENSUS } from './modules/ivar/consensus/'
@@ -41,9 +41,18 @@ workflow {
     log.info paramsSummaryLog(workflow)
     
     // --- SETUP: Reference Generation --
-    // Collect all matches into a list; handle directory path transparently
-    def _ref_path = file(params.reference_input)
-    def input_refs = _ref_path.isDirectory() ? _ref_path.listFiles().sort() : files(params.reference_input)
+    // Collect all matches into a list; handle directory path transparently.
+    // Avoid calling isDirectory() on glob results (file() returns a List for globs,
+    // which has no isDirectory() method and triggers "Missing process or function" errors).
+    def _ref_input = params.reference_input
+    def _has_glob = _ref_input.contains('*') || _ref_input.contains('?') || _ref_input.contains('{')
+    def input_refs
+    if (_has_glob) {
+        input_refs = files(_ref_input)
+    } else {
+        def _ref_path = file(_ref_input)
+        input_refs = _ref_path.isDirectory() ? _ref_path.listFiles().sort() : [_ref_path]
+    }
     if (input_refs.size() == 0) error "No reference files found matching: ${params.reference_input}"
 
     // Logic for GenBank detection (using the first file as a representative)
@@ -261,18 +270,33 @@ workflow {
 
                 PROCESS_GENERATE_COV_TABLE(
                     combined_data.combined_rdata,
-                    params.asaptools_min_location_depth,
+                    params.depth,
                     params.file_name,
                     poi_input
                 )
             }
             
             if(params.asaptools_qc_plots){
-            
+
                 PROCESS_QC_PLOTS(
                     combined_data.combined_rdata,
                     params.file_name,
                     poi_input
+                )
+
+                PROCESS_FASTP_PANEL(
+                    ch_trim_json_for_multiqc.map { meta, json -> json }.collect(),
+                    params.file_name
+                )
+            }
+
+            if(params.asaptools_snp_plots){
+
+                PROCESS_SNP_PLOTS(
+                    combined_data.combined_rdata,
+                    params.file_name,
+                    poi_input,
+                    gb_file_to_use ?: []
                 )
             }
 

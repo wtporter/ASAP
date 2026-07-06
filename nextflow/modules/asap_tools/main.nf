@@ -139,7 +139,7 @@ process PROCESS_GENERATE_SNP_TABLE {
         ${prefix} \\
         ${effective_prop} \\
         ${params.asaptools_max_sample_snp_count} \\
-        ${params.asaptools_min_location_depth} \\
+        ${params.depth} \\
         "${exclude_list}" \\
         ${poi_param} \\
         "${bed_param}" \\
@@ -160,17 +160,67 @@ process PROCESS_QC_PLOTS {
     val  poi_input
 
     output:
-    path "*.html", emit: html
-    path "*.jpg",  emit: jpg
+    path "*.html", emit: html, optional: true
+    path "*.jpg",  emit: jpg,  optional: true
 
     script:
-    def poi_param = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
+    def poi_param      = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
+    def snp_prop_param = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
     """
     process_asaptools_generate_figures.R \\
         ${combined_rdata} \\
         ${prefix} \\
         ${poi_param} \\
-        ${params.asaptools_snp_proportion} \\
-        ${params.asaptools_min_location_depth}
+        ${snp_prop_param} \\
+        ${params.depth}
+    """
+}
+
+process PROCESS_SNP_PLOTS {
+    tag "snp_plots"
+
+    publishDir "${params.outdir}/sample_reports/plots", mode: 'copy'
+
+    input:
+    path combined_rdata
+    val  prefix
+    val  poi_input
+    path "genbank_input/*"
+
+    output:
+    path "*.html", emit: html, optional: true
+    path "*.jpg",  emit: jpg,  optional: true
+
+    script:
+    def poi_param      = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
+    def snp_prop_param = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
+    """
+    shopt -s nullglob
+    process_asaptools_snp_figures.R \\
+        ${combined_rdata} \\
+        ${prefix} \\
+        ${poi_param} \\
+        ${snp_prop_param} \\
+        ${params.depth} \\
+        genbank_input/*
+    """
+}
+
+process PROCESS_FASTP_PANEL {
+    tag "fastp_panel"
+
+    publishDir "${params.outdir}/sample_reports/plots", mode: 'copy'
+
+    input:
+    path fastp_jsons
+    val  prefix
+
+    output:
+    path "${prefix}_QC_fastp_panel.html", emit: html, optional: true
+    path "${prefix}_QC_fastp_panel.jpg",  emit: jpg,  optional: true
+
+    script:
+    """
+    process_fastp_panel.R ${prefix} ${fastp_jsons}
     """
 }

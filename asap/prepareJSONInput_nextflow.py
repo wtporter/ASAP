@@ -83,9 +83,10 @@ def _process_fasta(fasta, fasta_type, message=None):
     return return_list
 
 def _process_fasta_single(fasta):
-    for seq in skbio.io.registry.read(fasta, format='fasta', constructor=DNA):
-        amplicon = assayInfo.Amplicon(sequence=_clean_seq(str(seq)))
-    return amplicon
+    seqs = list(skbio.io.registry.read(fasta, format='fasta', constructor=DNA))
+    if len(seqs) != 1:
+        raise ValueError(f"Expected exactly 1 FASTA record in {fasta}, got {len(seqs)}")
+    return assayInfo.Amplicon(sequence=_clean_seq(str(seqs[0])))
 
 def _clean_seq(sequence):
     return_seq = sequence.upper()
@@ -103,7 +104,7 @@ def _strip(string):
 def _isNT(sequence, positions):
     size = 0
     for token in positions.split(','):
-        m = re.search(r"(\d*)-(\d*)", token)
+        m = re.search(r"(\d+)-(\d+)", token)
         if m:
             size += int(m.group(2)) - int(m.group(1)) + 1
         else:

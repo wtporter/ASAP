@@ -56,7 +56,10 @@ expand_codon_merges <- function(SNPS, min_snp_perc = 0) {
   #    e.g. position="5117-5119", reference="TTT", variant="TAA" → "T5118A|T5119A"
   # ---------------------------------------------------------------------------
   make_combined_snp_name <- function(position_str, ref_codon, var_codon) {
-    bounds    <- as.numeric(strsplit(position_str, "-")[[1]])
+    bounds <- as.numeric(strsplit(position_str, "-")[[1]])
+    if (length(bounds) < 2 || any(is.na(bounds))) {
+      stop(paste("Malformed codon_merge_position (expected 'start-end'):", position_str))
+    }
     positions <- seq(bounds[1], bounds[2])
     ref_bases <- strsplit(ref_codon, "")[[1]]
     var_bases <- strsplit(var_codon, "")[[1]]
@@ -113,10 +116,16 @@ expand_codon_merges <- function(SNPS, min_snp_perc = 0) {
     select(any_of(names(SNPS)))
 
   # ---------------------------------------------------------------------------
-  # I. Bind and drop all codon_merge_* staging columns
+  # I. Bind, drop staging columns, and deduplicate.
+  #    A SNP at a position shared by two overlapping ORFs can produce two extra
+  #    rows with the same combined_SNP but slightly different codon depths.
+  #    Keep the row with the highest snp_proportion to resolve the ambiguity.
   # ---------------------------------------------------------------------------
   bind_rows(SNPS_trimmed, extra_rows) %>%
-    select(-starts_with("codon_merge_"))
+    select(-starts_with("codon_merge_")) %>%
+    group_by(across(any_of(c("run", "assay_name", "name", "SNP")))) %>%
+    slice_max(order_by = snp_proportion, n = 1, with_ties = FALSE) %>%
+    ungroup()
 }
 
 # Helper: column names starting with "codon_merge_" that exist in a data frame

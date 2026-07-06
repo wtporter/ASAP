@@ -558,8 +558,6 @@ figures, and FASTA files. Processing follows a fan-out / gather pattern:
 +--------------------------------------+----------+--------------------------------------------------+
 | ``--asaptools_genbank_location``     | ``null`` | GenBank file for amino acid annotation           |
 +--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_min_location_depth``   | ``99``   | Minimum depth to report a position in tables     |
-+--------------------------------------+----------+--------------------------------------------------+
 | ``--asaptools_snp_proportion``       | ``null`` | Override allele frequency threshold for SNP table|
 +--------------------------------------+----------+--------------------------------------------------+
 | ``--asaptools_max_sample_snp_count`` | ``50``   | Max SNPs per sample before flagging as noisy     |

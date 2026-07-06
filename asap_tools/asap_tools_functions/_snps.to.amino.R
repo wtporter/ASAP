@@ -17,6 +17,21 @@ library(parallelly)
   gene_seq_dna <- Biostrings::DNAString(gene_seq)
   snp_in_gene  <- (position_vec - gene_start) + 1
 
+  gene_len <- nchar(gene_seq)
+  if (any(snp_in_gene < 1L) || any(snp_in_gene > gene_len)) {
+    return(data.frame(
+      SNP                   = as.character(genome_snp),
+      snp_position_genome   = paste(position_vec, collapse = "|"),
+      snp_position_gene     = paste(snp_in_gene,  collapse = "|"),
+      Theoretical_Reference = NA_character_,
+      Gene                  = as.character(gene_name),
+      Product               = as.character(gene_product),
+      AA                    = "Non-coding",
+      SNP_Gene              = NA_character_,
+      stringsAsFactors      = FALSE
+    ))
+  }
+
   ref_bases <- character(n_comp)
   obs_seq   <- gene_seq_dna
   for (i in seq_len(n_comp)) {

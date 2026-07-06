@@ -39,7 +39,7 @@ if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
     group_by(name, assay_name) %>%
     summarise(
       total_bp = n(),
-      n_cov = sum(depth > min_depth, na.rm = TRUE),
+      n_cov = sum(depth >= min_depth, na.rm = TRUE),
       .groups = 'drop'
     ) %>%
     mutate(Coverage = round(100 * (n_cov / total_bp), 2)) %>%
@@ -68,7 +68,7 @@ if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
     group_by(name, assay_name) %>%
     summarise(
       total_bp = n(),
-      n_cov = sum(depth > min_depth, na.rm = TRUE),
+      n_cov = sum(depth >= min_depth, na.rm = TRUE),
       .groups = 'drop'
     ) %>%
     mutate(Coverage = round(100 * (n_cov / total_bp), 2)) %>%
@@ -79,7 +79,7 @@ if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
     group_by(name, assay_name, gene) %>%
     summarise(
       total_bp = n(),
-      n_cov = sum(depth > min_depth, na.rm = TRUE),
+      n_cov = sum(depth >= min_depth, na.rm = TRUE),
       .groups = 'drop'
     ) %>%
     mutate(Coverage = round(100 * (n_cov / total_bp), 2)) %>%

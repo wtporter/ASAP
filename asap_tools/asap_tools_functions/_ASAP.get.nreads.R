@@ -24,6 +24,7 @@ ASAP.get.nreads <- function(read.ASAP.df, num_cores = 1) {
   }
 
   n_reads_out$position <- as.numeric(as.character(n_reads_out$position))
+  n_reads_out$n_reads  <- as.numeric(as.character(n_reads_out$n_reads))
 
   return(n_reads_out)
 }
