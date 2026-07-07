@@ -374,8 +374,8 @@ tiers <- list(
   list(plots = list(p_filter, p_readlen),      ncol = 2, height = 4),  # C, D
   list(plots = list(p_gc, p_dup),              ncol = 2, height = 4),  # E, F
   list(plots = list(p_insert, p_adapter),      ncol = 2, height = 4),  # G, H
-  list(plots = list(p_quality),                ncol = 1, height = 6),  # I -- full width, just above J
-  list(plots = list(p_cycles),                 ncol = 1, height = 8)   # J -- full width
+  list(plots = list(p_quality),                ncol = 1, height = 4),  # I -- full width, just above J
+  list(plots = list(p_cycles),                 ncol = 1, height = 12)   # J -- full width
 )
 tiers <- lapply(tiers, function(t) { t$plots <- Filter(Negate(is.null), t$plots); t })
 tiers <- Filter(function(t) length(t$plots) > 0, tiers)
