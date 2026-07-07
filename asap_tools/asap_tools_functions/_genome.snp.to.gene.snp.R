@@ -7,19 +7,7 @@ library(parallelly)
 
 genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = NULL) {
   reference    <- suppressWarnings(genbankr::readGenBank(ref_seq))
-  Reference_DF <- left_join(
-    data.frame(reference@genes),
-    data.frame(reference@cds) %>% select(locus_tag, product, translation)
-  )
-
-  Reference_DF$sequence <- "No Seq"
-  for (i in 1:nrow(Reference_DF)) {
-    Reference_DF$sequence[i] <- substr(as.character(reference@sequence),
-                                       Reference_DF[i, 2], Reference_DF[i, 3])
-  }
-
-  Reference_DF <- Reference_DF %>%
-    mutate(gene = ifelse(is.na(gene), locus_tag, gene))
+  Reference_DF <- extract_gene_table(reference)
 
   SNP_List <- snp_db
 

@@ -169,19 +169,7 @@ library(parallelly)
 
 snps.to.amino <- function(snp_db, ref_seq, cores = NULL) {
   reference    <- suppressWarnings(genbankr::readGenBank(ref_seq))
-  Reference_DF <- data.frame(reference@cds)
-
-  Reference_DF <- as.data.frame(lapply(Reference_DF, function(x) if (is.list(x)) sapply(x, paste, collapse = ";") else x))
-  Reference_DF$experiment <- NULL
-  Reference_DF$inference  <- NULL
-  Reference_DF <- Reference_DF %>%
-    mutate(across(where(~inherits(.x, "CharacterList")), ~sapply(.x, paste, collapse = "; ")))
-
-  Reference_DF$sequence <- "No Seq"
-  for (i in 1:nrow(Reference_DF)) {
-    Reference_DF$sequence[i] <- substr(as.character(reference@sequence),
-                                       Reference_DF[i, 2], Reference_DF[i, 3])
-  }
+  Reference_DF <- extract_gene_table(reference)
 
   # SNP strings are 1 or 2 "<ref><pos><mut>" tokens, pipe-joined for
   # codon-merge combo rows (e.g. "T5118A|T5119A"); parse each token

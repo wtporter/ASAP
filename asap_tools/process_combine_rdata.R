@@ -8,6 +8,11 @@ library(doParallel)
 library(data.table)
 library(parallelly)
 
+# Resolve path to local function files relative to this script
+.script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
+.functions_dir <- file.path(dirname(.script_path), "asap_tools_functions")
+source(file.path(.functions_dir, "_shorten_sample_names.R"))
+
 # 1. Capture Arguments
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) {
@@ -113,6 +118,14 @@ gc()
 # Merge large Array Info (Depth/Proportions)
 final_array <- as.data.frame(data.table::rbindlist(map(combined_list, "info"), fill = TRUE))
 gc()
+
+# Compute shortened plot labels once against the full cohort so every
+# downstream script/plot uses the same name -> name_short mapping. The full
+# `name` column is left untouched (still used for exports/tables/traceability).
+name_map <- shorten_sample_names(final_asap$name)
+final_asap$name_short  <- name_map[final_asap$name]
+final_snps$name_short  <- name_map[final_snps$name]
+final_array$name_short <- name_map[final_array$name]
 
 # 5. Save Combined Outputs
 # Saving both as a compressed Rdata object and a flat CSV summary

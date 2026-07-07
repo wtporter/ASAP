@@ -57,13 +57,13 @@ workflow {
 
     // Logic for GenBank detection (using the first file as a representative)
     def first_ref = input_refs[0]
-    def is_genbank = first_ref.name.endsWith('.gb') || first_ref.name.endsWith('.genbank') || first_ref.name.endsWith('.gbk') || first_ref.name.endsWith('.gbf') || first_ref.name.endsWith('.gbb')
+    def is_genbank = first_ref.name.endsWith('.gb') || first_ref.name.endsWith('.genbank') || first_ref.name.endsWith('.gbk') || first_ref.name.endsWith('.gbf') || first_ref.name.endsWith('.gbb') || first_ref.name.endsWith('.gbff')
     
     // This will be a list of paths if GenBank, or a single path otherwise
     def gb_file_to_use = is_genbank ? input_refs : (params.asaptools_genbank_location ? file(params.asaptools_genbank_location) : null)
 
     if (params.codon_correction && !gb_file_to_use) {
-        error "ERROR: --codon_correction requires a GenBank reference: provide --reference_input as GenBank file(s) (.gb/.gbf/.gbb/.gbk/.genbank) or set --asaptools_genbank_location."
+        error "ERROR: --codon_correction requires a GenBank reference: provide --reference_input as GenBank file(s) (.gb/.gbf/.gbb/.gbk/.gbff/.genbank) or set --asaptools_genbank_location."
     }
 
     if (first_ref.name.endsWith('.json')) {

@@ -442,7 +442,20 @@ These three functions provide the shared machinery used by both
 `main()` (line 1156) is the CLI entry point. Key steps:
 
 1. Opens BAM via pysam; extracts sample name from the `RG` read group header
-   (falls back to BAM filename stem).
+   (falls back to BAM filename stem). Computes `mapped_reads`,
+   `unmapped_reads`, and `unassigned_reads` (lines ~782–798) from a single,
+   consistent BAM snapshot — `--original-bam` (pre-ASAP-filter, straight off
+   the aligner) when provided, else the `-b` input BAM. Do not compute these
+   three from different BAMs (e.g. one pre-filter, one post-identity-filter)
+   — `identityFilter.py` re-flags failing reads as unmapped rather than
+   deleting them (see §4 `identityFilter.py`), so mixing snapshots
+   double-attributes those reads. `mapped_reads` = primary-mapped count
+   (`samtools flagstat` "primary mapped", excludes secondary/supplementary).
+   `unmapped_reads` = pysam `.unmapped`, the *total* unmapped-read count.
+   `unassigned_reads` = pysam `.nocoordinate`, the subset of unmapped reads
+   with no alignment coordinate at all (both mates failed to align) —
+   already included inside `unmapped_reads`, not a separate pool. See §6.3
+   for how the R-side Alignment Summary plot accounts for this overlap.
 2. For each amplicon: runs pileup → calls `_process_pileup`; if
    `codon_correction` or `discover_roi` is enabled and there are ≥2 SNPs with
    depth > 0, does a single BAM pass via `_build_fragment_allele_table`
@@ -466,6 +479,13 @@ See Section 5 for the full type table.
 `cast_json_output_types`.
 
 ### 5.1 XML Element Hierarchy
+
+`mapped_reads`/`unmapped_reads`/`unassigned_reads` are all computed from one
+BAM snapshot (see §3.3 step 1). `unassigned_reads` (no alignment coordinate
+at all) is a *subset* of `unmapped_reads` (total unmapped count) — not an
+additional, disjoint category. To get a mutually-exclusive "truly unmapped
+but not already counted as unassigned" figure, compute
+`unmapped_reads − unassigned_reads`.
 
 ```
 <sample name="…" mapped_reads="…" unmapped_reads="…" unassigned_reads="…"
@@ -773,10 +793,26 @@ merges with `data.table::rbindlist()`. If a POI CSV is provided, filters
 above a depth threshold, pivoted wide by sample, styled as a 10-bin
 color gradient (red→green) in Excel via openxlsx.
 
-**`process_asaptools_generate_figures.R`**: Three ggplot2 faceted plots
-(coverage depth, N-read proportion, SNP prevalence), each exported as
-static JPG and interactive HTML via plotly/ggplotly. Rolling-mean
-downsampling targets ≤10,000 points per facet for manageable file size.
+**`process_asaptools_generate_figures.R`**: Five ggplot2 plots — coverage
+depth, N-read proportion, breadth-of-coverage heatmap, alignment summary,
+and read funnel — each exported as static JPG and interactive HTML via
+plotly/ggplotly. Rolling-mean downsampling targets ≤10,000 points per facet
+for manageable file size.
+
+The **Alignment Summary** plot (counts + percentage panels) stacks
+`mapped_reads` ("Aligned"), `unassigned_reads` ("Unassigned"),
+`unmapped_reads − unassigned_reads` ("Unmapped"), and `total_reads −
+trimmed_reads` ("Removed by FastP"). The subtraction matters: `unmapped_reads`
+(pysam `.unmapped`) is the *total* unmapped-read count in the BAM, and
+`unassigned_reads` (pysam `.nocoordinate`) is the subset of those with no
+alignment coordinate at all (neither mate aligned anywhere) — so
+`unassigned_reads` is already included inside `unmapped_reads`, not a
+separate pool. Stacking both raw would double-count nearly the entire
+non-aligned read pool. The remainder, `unmapped_reads − unassigned_reads`,
+is just the reads flagged unmapped but placed at a coordinate because their
+mate *did* align (mate-rescued placement) — usually a small sliver. See
+§5.1 for where `mapped_reads`/`unmapped_reads`/`unassigned_reads` are
+computed.
 
 **`process_asaptools_fasta_export.R`**: Exports `consensus_seq` from
 `final_asap` as one FASTA per assay, filtering to samples meeting the

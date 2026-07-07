@@ -121,6 +121,12 @@
         "bwa_container": { "type": "string", "default": "quay.io/biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:219b6c272b25e7e642ae3ff0bf0c5c81a5135ab4-0", "description": "Container image for bwa and samtools." },
         "bowtie2_container": { "type": "string", "default": "quay.io/biocontainers/mulled-v2-c742dccc9d8fabfcff2af0d8d6799dbc711366cf:1a5debacd33f449e5b3778ec7838b628406841f0-0", "description": "Container image for bowtie2 and samtools." }
       }
+    },
+    "execution_options": {
+      "title": "Execution/Environment Options",
+      "properties": {
+        "env_dir": { "type": ["string", "null"], "default": null, "description": "Parent directory for shared conda/singularity environment caches (envs stored under <env_dir>/conda and <env_dir>/singularity), reused across runs and users instead of being rebuilt per work directory. Unset = Nextflow's default per-work-directory caching." }
+      }
     }
   },
   "allOf": [
@@ -133,6 +139,7 @@
     { "$ref": "#/$defs/bam_processor_options" },
     { "$ref": "#/$defs/asaptools_options" },
     { "$ref": "#/$defs/ivar_options" },
-    { "$ref": "#/$defs/containers" }
+    { "$ref": "#/$defs/containers" },
+    { "$ref": "#/$defs/execution_options" }
   ]
 }

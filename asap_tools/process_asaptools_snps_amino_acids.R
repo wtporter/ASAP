@@ -9,6 +9,7 @@ library(parallelly)
 # Resolve path to local function files relative to this script
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
 .functions_dir <- file.path(dirname(.script_path), "asap_tools_functions")
+source(file.path(.functions_dir, "_extract_gene_table.R"))
 source(file.path(.functions_dir, "_genome.snp.to.gene.snp.R"))
 source(file.path(.functions_dir, "_snps.to.amino.R"))
 source(file.path(.functions_dir, "_expand_codon_merges.R"))

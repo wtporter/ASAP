@@ -7,7 +7,7 @@ library(Biostrings)
 .functions_dir <- Sys.getenv("ASAP_FUNCTIONS_DIR",
   unset = file.path(dirname(dirname(getwd())), "asap_tools_functions"))
 
-for (f in c("_snps.to.amino.R", "_genome.snp.to.gene.snp.R", "_expand_codon_merges.R",
+for (f in c("_extract_gene_table.R", "_shorten_sample_names.R", "_snps.to.amino.R", "_genome.snp.to.gene.snp.R", "_expand_codon_merges.R",
             "_read.ASAP.individual.R", "_read.ASAP.snps.individual.R",
             "_parse_snp_distribution.R")) {
   source(file.path(.functions_dir, f))

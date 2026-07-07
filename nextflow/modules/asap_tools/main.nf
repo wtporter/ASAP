@@ -192,8 +192,9 @@ process PROCESS_SNP_PLOTS {
     path "*.jpg",  emit: jpg,  optional: true
 
     script:
-    def poi_param      = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
-    def snp_prop_param = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
+    def poi_param         = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
+    def snp_prop_param    = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
+    def breadth_threshold = params.asaptools_breadth_threshold ?: params.breadth
     """
     shopt -s nullglob
     process_asaptools_snp_figures.R \\
@@ -202,6 +203,7 @@ process PROCESS_SNP_PLOTS {
         ${poi_param} \\
         ${snp_prop_param} \\
         ${params.depth} \\
+        ${breadth_threshold} \\
         genbank_input/*
     """
 }

@@ -8,13 +8,14 @@ TEST_DIR="${REPO_ROOT}/asap_tools/tests/testthat"
 LOG_DIR="${REPO_ROOT}/asap_tools/tests/logs"
 mkdir -p "${LOG_DIR}"
 
-if [[ ! -x "${RSCRIPT}" ]]; then
-  echo "R test env not found at ${R_ENV} — building from r_env.yml..."
-  mamba env create \
+echo "Syncing R test env from r_env.yml..."
+mamba env create --yes \
+    -f "${REPO_ROOT}/nextflow/modules/asap_tools/r_env.yml" \
+    -p "${R_ENV}" 2>/dev/null || \
+mamba env update --prune --yes \
     -f "${REPO_ROOT}/nextflow/modules/asap_tools/r_env.yml" \
     -p "${R_ENV}"
-  echo "Env built successfully."
-fi
+echo "Env ready."
 
 sbatch \
   --partition=compute \

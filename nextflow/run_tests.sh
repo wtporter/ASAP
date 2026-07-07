@@ -64,6 +64,9 @@
 
 set -euo pipefail
 
+source /tgen_labs/EPIC/miniconda3/etc/profile.d/conda.sh
+conda activate ASAP_nextflow_env
+
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 TEST_FILE="tests/ASAP_EtE.nf.test"
 LOG_DIR="${SCRIPT_DIR}/logs/nf-test"

@@ -785,11 +785,17 @@ USAGE
             sample_dict['name'] = samdata.header.to_dict()['RG'][0]['ID']
         else:
             sample_dict['name'] = os.path.splitext(os.path.basename(bam_fp.name))[0]
-        # Use original pre-filter BAM for mapped_reads (primary alignments only)
+        # Report mapped_reads/unmapped_reads/unassigned_reads from the original,
+        # pre-ASAP-filter BAM only, so all three come from one consistent snapshot
+        # (not mixed with primer-masking/identity-filtering/SMOR collapsing applied
+        # to bam_fp downstream). Amplicon-specific funnel fields (aligned_reads,
+        # amplicon_reads, etc.) still track the filtered BAM separately below.
+        orig_samdata = pysam.AlignmentFile(args.original_bam.name, "rb") if args.original_bam else None
+        count_samdata = orig_samdata or samdata
         bam_for_count = args.original_bam.name if args.original_bam else bam_fp.name
-        sample_dict['mapped_reads'] = _primary_mapped(bam_for_count) or str(samdata.mapped)
-        sample_dict['unmapped_reads'] = str(samdata.unmapped)
-        sample_dict['unassigned_reads'] = str(samdata.nocoordinate)
+        sample_dict['mapped_reads'] = _primary_mapped(bam_for_count) or str(count_samdata.mapped)
+        sample_dict['unmapped_reads'] = str(count_samdata.unmapped)
+        sample_dict['unassigned_reads'] = str(count_samdata.nocoordinate)
         # Add pre-QC and post-QC read counts from fastp/fastplong JSON when available
         if args.fastp_json:
             import json as _json
@@ -804,9 +810,6 @@ USAGE
         primer_stats  = _load_ref_stats(args.primer_stats)
         identity_stats = _load_ref_stats(args.identity_stats)
         smor_stats    = _load_ref_stats(args.smor_stats)
-
-        # Open original BAM for per-amplicon aligned_reads counts
-        orig_samdata = pysam.AlignmentFile(args.original_bam.name, "rb") if args.original_bam else None
 
         sample_dict['depth_filter'] = str(depth)
         sample_dict['proportion_filter'] = str(proportion)

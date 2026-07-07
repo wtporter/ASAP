@@ -36,7 +36,7 @@ load(RDATA_INPUT)
 array_info <- final_array
 
 # Join metadata
-array_info <- left_join(array_info, select(final_asap, run, assay_name, name, amplicon_reads, avg_depth, breadth))
+array_info <- left_join(array_info, select(final_asap, run, assay_name, name, name_short, amplicon_reads, avg_depth, breadth))
 
 # --- Handle Positions of Interest ---
 if (!(POI_CSV %in% c("NA", "NULL", "", NA))) {
@@ -78,7 +78,7 @@ array_avg <- array_info %>%
 # --- Plot 1: Coverage Depth ---
 safe_plot("Coverage Depth", {
   p_cov <- array_avg %>%
-    ggplot(aes(x = position, y = depth_avg, col = name, group = name,
+    ggplot(aes(x = position, y = depth_avg, col = name_short, group = name_short,
                text = paste0("Sample: ", name,
                              "<br>~Position: ", position,
                              "<br>Mean Depth (10bp): ", round(depth_avg, 1)))) +
@@ -105,7 +105,7 @@ safe_plot("Coverage Depth", {
 # --- Plot 2: N Read Proportion ---
 safe_plot("N Read Proportion", {
   p_n <- array_avg %>%
-    ggplot(aes(x = position, y = n_reads_prop, col = name, group = name,
+    ggplot(aes(x = position, y = n_reads_prop, col = name_short, group = name_short,
                text = paste0("Sample: ", name,
                              "<br>~Position: ", position,
                              "<br>Proporion 'N' Reads (10bp window): ", round(n_reads_prop, 1)))) +
@@ -128,11 +128,11 @@ safe_plot("N Read Proportion", {
 # --- Plot 3: Breadth of Coverage Heatmap ---
 safe_plot("Breadth Heatmap", {
   breadth_data <- final_asap %>%
-    select(name, assay_name, breadth) %>%
+    select(name, name_short, assay_name, breadth) %>%
     mutate(breadth = as.numeric(breadth))
 
   p_breadth <- breadth_data %>%
-    ggplot(aes(x = assay_name, y = name, fill = breadth,
+    ggplot(aes(x = assay_name, y = name_short, fill = breadth,
                text = paste0("Sample: ", name,
                              "<br>Assay: ", assay_name,
                              "<br>Breadth: ", round(breadth, 1), "%"))) +
@@ -161,20 +161,26 @@ safe_plot("Breadth Heatmap", {
 # --- Plot 4: Alignment Summary (counts + percentage panels) ---
 safe_plot("Alignment Summary", {
   align_data <- final_asap %>%
-    select(name, total_reads, trimmed_reads, mapped_reads, unassigned_reads, unmapped_reads) %>%
+    select(name, name_short, total_reads, trimmed_reads, mapped_reads, unassigned_reads, unmapped_reads) %>%
     distinct() %>%
     mutate(
       across(c(total_reads, trimmed_reads, mapped_reads, unassigned_reads, unmapped_reads), as.numeric),
-      lost_fastp = pmax(0, total_reads - trimmed_reads),
-      lost_other = pmax(0, trimmed_reads - mapped_reads - unassigned_reads - unmapped_reads)
+      # unmapped_reads (pysam .unmapped, from newBamProcessor.py) is the TOTAL unmapped
+      # count; unassigned_reads (pysam .nocoordinate) is the subset with no alignment
+      # coordinate at all (neither mate mapped anywhere) -- already included inside
+      # unmapped_reads, not a separate pool. Subtract it back out so the two are
+      # mutually exclusive and the stacked categories actually sum to total_reads.
+      unmapped_only = pmax(0, unmapped_reads - unassigned_reads),
+      lost_fastp    = pmax(0, total_reads - trimmed_reads),
+      lost_other    = pmax(0, trimmed_reads - mapped_reads - unmapped_reads)
     ) %>%
-    select(name, total_reads,
+    select(name, name_short, total_reads,
            "Aligned"          = mapped_reads,
            "Unassigned"       = unassigned_reads,
-           "Unmapped"         = unmapped_reads,
+           "Unmapped"         = unmapped_only,
            "Other"            = lost_other,
            "Removed by FastP" = lost_fastp) %>%
-    pivot_longer(-c(name, total_reads), names_to = "Category", values_to = "Reads") %>%
+    pivot_longer(-c(name, name_short, total_reads), names_to = "Category", values_to = "Reads") %>%
     mutate(
       Category = factor(Category, levels = c("Aligned", "Unassigned", "Unmapped",
                                              "Other", "Removed by FastP")),
@@ -193,7 +199,7 @@ safe_plot("Alignment Summary", {
           legend.position = "bottom")
 
   p_align <- align_data %>%
-    ggplot(aes(x = name, y = Reads, fill = Category,
+    ggplot(aes(x = name_short, y = Reads, fill = Category,
                text = paste0("Sample: ", name,
                              "<br>Category: ", Category,
                              "<br>Reads: ", scales::comma(Reads)))) +
@@ -204,7 +210,7 @@ safe_plot("Alignment Summary", {
     labs(title = "Read Counts", x = "Sample", y = "Read Count", fill = NULL)
 
   p_align_pct <- align_data %>%
-    ggplot(aes(x = name, y = Percent, fill = Category,
+    ggplot(aes(x = name_short, y = Percent, fill = Category,
                text = paste0("Sample: ", name,
                              "<br>Category: ", Category,
                              "<br>Percent: ", round(Percent, 1), "%"))) +
@@ -222,7 +228,7 @@ safe_plot("Alignment Summary", {
     subtitle   = "Bar height = total reads (pre-trim). Colors show read fate through FastP trimming and alignment.",
     tag_levels = "A",
     caption    = wrap_cap(paste(
-      "(A) Total read count per sample stacked by alignment outcome. Bar height = total reads before FastP trimming. Categories: Aligned = reads mapped to a known amplicon; Unassigned = mapped but not assigned to an amplicon; Unmapped = did not align to the reference; Removed by FastP = discarded during adapter/quality trimming; Other = reads not accounted for by the above categories.",
+      "(A) Total read count per sample stacked by alignment outcome. Bar height = total reads before FastP trimming. Categories: Aligned = primary reads mapped to the reference; Unassigned = reads with no alignment coordinate at all (neither mate mapped anywhere); Unmapped = reads flagged unmapped but still assigned a coordinate because their mate mapped nearby (mate-rescued placement) — a subset of the total unmapped count not already captured by Unassigned; Removed by FastP = discarded during adapter/quality trimming; Other = reads not accounted for by the above categories.",
       "(B) Same data expressed as a percentage of total pre-trim reads per sample.",
       sep = "\n"
     ), w = 150),
@@ -245,7 +251,7 @@ safe_plot("Alignment Summary", {
 # --- Plot 5: Read Funnel (counts + percentage panels) ---
 safe_plot("Read Funnel", {
   funnel_data <- final_asap %>%
-    select(name, assay_name,
+    select(name, name_short, assay_name,
            aligned_reads, no_primer_reads,
            identity_discarded,
            smor_pairs_dropped,
@@ -269,13 +275,13 @@ safe_plot("Read Funnel", {
                     "Final Reads"             = "#2ecc71")
 
   funnel_long <- funnel_data %>%
-    select(name, assay_name,
+    select(name, name_short, assay_name,
            "Lost: No Primer"       = lost_primer,
            "Lost: Identity Filter" = lost_identity,
            "Lost: SMOR"            = lost_smor,
            "Lost: Other"           = lost_other,
            "Final Reads"           = kept) %>%
-    pivot_longer(-c(name, assay_name), names_to = "Fate", values_to = "Reads") %>%
+    pivot_longer(-c(name, name_short, assay_name), names_to = "Fate", values_to = "Reads") %>%
     mutate(Fate = factor(Fate, levels = fate_levels)) %>%
     filter(!is.na(Reads))
 
@@ -293,7 +299,7 @@ safe_plot("Read Funnel", {
 
   p_funnel <- funnel_long %>%
     filter(Reads > 0) %>%
-    ggplot(aes(x = name, y = Reads, fill = Fate,
+    ggplot(aes(x = name_short, y = Reads, fill = Fate,
                text = paste0("Sample: ", name,
                              "<br>Fate: ", Fate,
                              "<br>Reads: ", scales::comma(Reads)))) +
@@ -305,7 +311,7 @@ safe_plot("Read Funnel", {
     labs(title = "Read Counts", x = "Sample", y = "Read Count", fill = NULL)
 
   p_funnel_pct <- funnel_long %>%
-    ggplot(aes(x = name, y = Percent, fill = Fate,
+    ggplot(aes(x = name_short, y = Percent, fill = Fate,
                text = paste0("Sample: ", name,
                              "<br>Fate: ", Fate,
                              "<br>Percent: ", round(Percent, 1), "%"))) +
