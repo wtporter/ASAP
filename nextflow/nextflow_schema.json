@@ -96,7 +96,7 @@
         "asaptools_positions_of_interest": {"type": ["string", "null"], "default": null, "description": "Path to CSV file containing genes/positions of interest. This is helpful if processing amplicon data using WGS reference."},
         "asaptools_snp_proportion": {"type": ["number", "null"], "default": null, "description": "SNP Table Parameter: Minimum proportion required to call a variant in the ASAP Tools script. If unset, falls back to `--proportion`."},
         "asaptools_genbank_location": { "type": ["string", "null"], "default": null, "description": "SNP Table Parameter: Path to the reference GenBank file."},
-        "asaptools_max_sample_snp_count": { "type": "integer", "default": 50, "description": "SNP Table Parameter: Maximum number of SNPs allowed per sample. This filters samples with >x snps in the SNP table."},
+        "asaptools_max_sample_snp_count": { "type": "integer", "default": 10000, "description": "SNP Table Parameter: Maximum number of SNPs allowed per sample. This filters samples with >x snps in the SNP table."},
         "asaptools_samples_to_remove": { "type": ["string", "null"], "default": null, "description": "SNP Table Parameter: Comma-separated list of Sample IDs to exclude from the SNP table."},
         "asaptools_breadth_threshold": { "type": ["number", "null"], "default": null, "description": "Minimum breadth of coverage (>) to export FASTA files for. If unset, falls back to `--breadth`."}
       }

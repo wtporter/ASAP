@@ -21,8 +21,13 @@ HEADER = pysam.AlignmentHeader.from_dict({
 })
 
 
-def _make_read(name, seq, start, flag=0, is_read1=True):
-    """Return an AlignedSegment covering positions [start, start+len(seq))."""
+def _make_read(name, seq, start, flag=0, is_read1=True, quals=None):
+    """Return an AlignedSegment covering positions [start, start+len(seq)).
+
+    `quals`, if given, is a list/str of per-base Phred scores overriding the
+    default uniform Q40 ("I") -- used to reproduce maskPrimers.py's real
+    output, which writes primer-masked 'N' bases with literal quality 0.
+    """
     r = pysam.AlignedSegment(HEADER)
     r.query_name = name
     r.query_sequence = seq
@@ -31,7 +36,10 @@ def _make_read(name, seq, start, flag=0, is_read1=True):
     r.reference_start = start
     r.mapping_quality = 60
     r.cigar = [(0, len(seq))]  # all match
-    r.query_qualities = pysam.qualitystring_to_array("I" * len(seq))
+    if quals is not None:
+        r.query_qualities = list(quals)
+    else:
+        r.query_qualities = pysam.qualitystring_to_array("I" * len(seq))
     return r
 
 
@@ -306,3 +314,36 @@ def test_masked_pos_table_disjoint_on_overlap(tmp_bam):
 
     assert pos_table[100].get("pair0") == "T"
     assert "pair0" not in masked[100]
+
+
+# ---------------------------------------------------------------------------
+# Case 8: a Q0 masked base must still land in `masked`, not vanish
+# ---------------------------------------------------------------------------
+def test_masked_base_zero_quality_still_recorded(tmp_bam):
+    """Purpose: verify that a primer-masked 'N' base written with literal
+    quality 0 (maskPrimers.py's real output -- see maskPrimers.py:137,161,
+    which zeroes quality for the entire masked region) is still recorded in
+    `masked`, not silently dropped.
+
+    This guards against a real regression class: pysam's `pileup()` defaults
+    to `min_base_quality=13`, under which a Q0 base is invisible to
+    `pileupcolumn.pileups` entirely (not flagged, just absent). The
+    fetch()-based `_build_fragment_allele_table` has no quality filtering at
+    all, so it must see this fragment regardless of quality.
+
+    Test input: a single read covering ref 95-114, with an 'N' at offset 5
+    (pos 100) whose quality is 0; all other bases quality 40 ("I").
+
+    Expected result: pos_table[100] is empty for this fragment, and
+    masked[100] contains it.
+    """
+    seq = "A" * 5 + "N" + "A" * 14
+    quals = [40] * 5 + [0] + [40] * 14
+    r = _make_read("masked0", seq, 95, quals=quals)
+
+    samdata = tmp_bam([r])
+    pos_table, _, masked, _ = _build_fragment_allele_table(samdata, [100])
+    samdata.close()
+
+    assert "masked0" not in pos_table[100]
+    assert "masked0" in masked[100]

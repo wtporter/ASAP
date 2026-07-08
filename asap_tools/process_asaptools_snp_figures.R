@@ -80,16 +80,14 @@ if (!(POI_CSV %in% c("NA", "NULL", "", NA))) {
 
 # --- Plot: SNP Position Prevalence ---
 safe_plot("SNP Prevalence", {
-  SNPS_plot <- SNPS %>% mutate(space_count = str_count(snp_distribution, " "))
-  max_spaces <- max(SNPS_plot$space_count, na.rm = TRUE)
-
-  SNPS_plot <- SNPS_plot %>%
-    relocate(snp_distribution, .after = last_col()) %>%
-    separate(snp_distribution, into = paste0("Dist", 1:(1 + max_spaces)), sep = ", ", fill = "right") %>%
-    pivot_longer(starts_with("Dist"), names_to = "Temp", values_to = "Dist") %>%
-    select(-Temp) %>%
-    filter(!is.na(Dist)) %>%
-    separate(Dist, into = c("Call", "n"), sep = "=") %>%
+  # Expand snp_distribution ("A=5, T=3, ...") to one row per allele. Use
+  # separate_longer_delim rather than separate()+pivot_longer(): the latter first
+  # builds a (1 + max spaces)-wide frame for every row, which explodes to ~150M
+  # transient rows (and >20GB) when indel-rich positions push the column count to 50+.
+  SNPS_plot <- SNPS %>%
+    separate_longer_delim(snp_distribution, delim = ", ") %>%
+    separate_wider_delim(snp_distribution, delim = "=", names = c("Call", "n"),
+                         too_many = "merge", too_few = "align_start") %>%
     mutate(snp_proportion = 100 * (as.numeric(n) / as.numeric(location_depth))) %>%
     mutate(SNP = paste0(snp_reference, position, Call)) %>%
     filter(snp_reference != Call) %>%
@@ -154,7 +152,9 @@ safe_plot("Strand Bias", {
       mutate(
         total_strand   = as.numeric(snp_call_R1) + as.numeric(snp_call_R2),
         strand_ratio   = as.numeric(snp_call_R1) / total_strand,
-        snp_proportion = 100 * (as.numeric(n) / as.numeric(location_depth))
+        # reads supporting the call (both strands) over total depth; strand_data has
+        # no expanded per-allele "n" column, so the old as.numeric(n) picked up dplyr::n()
+        snp_proportion = 100 * (total_strand / as.numeric(location_depth))
       ) %>%
       filter(total_strand > 0, !is.na(strand_ratio))
 
@@ -239,17 +239,12 @@ safe_plot("Genome Track", {
     return(invisible(NULL))
   }
 
+  # See SNP Prevalence block: separate_longer_delim avoids the ~150M-row / >20GB
+  # blowup that separate()+pivot_longer() causes on indel-rich distributions.
   snp_local <- SNPS %>%
-    mutate(space_count = str_count(snp_distribution, " "))
-  max_sp <- max(snp_local$space_count, na.rm = TRUE)
-
-  snp_local <- snp_local %>%
-    relocate(snp_distribution, .after = last_col()) %>%
-    separate(snp_distribution, into = paste0("Dist", 1:(1 + max_sp)), sep = ", ", fill = "right") %>%
-    pivot_longer(starts_with("Dist"), names_to = "Temp", values_to = "Dist") %>%
-    select(-Temp) %>%
-    filter(!is.na(Dist)) %>%
-    separate(Dist, into = c("Call", "n"), sep = "=") %>%
+    separate_longer_delim(snp_distribution, delim = ", ") %>%
+    separate_wider_delim(snp_distribution, delim = "=", names = c("Call", "n"),
+                         too_many = "merge", too_few = "align_start") %>%
     mutate(snp_proportion = 100 * (as.numeric(n) / as.numeric(location_depth))) %>%
     filter(snp_reference != Call, !is.na(snp_proportion), depth >= MIN_DEPTH)
 

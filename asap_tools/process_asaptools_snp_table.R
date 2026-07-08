@@ -188,7 +188,24 @@ generate_SNP_table <- function(include_only = TRUE) {
     )
   
   Background$snp_proportion[is.na(Background$snp_proportion)] <- 0
-  
+
+  # 4b. Collapse codon-merge position spillover
+  # Codon-merged SNP names can tag one SNP at several genome positions (e.g. T4987C
+  # at 4985 and 4987). The many-to-many coverage join above then reads `depth` from
+  # each of those positions, yielding conflicting snp_prop_final for one
+  # (sample, SNP) -> list-cols in pivot_wider and a write.csv/openxlsx crash. Keep
+  # only the coverage row at the SNP's own position (fall back to deepest-covered if
+  # the encoded position is absent). Preserves every SNP and all overlapping-gene
+  # rows at that position.
+  Background <- Background %>%
+    group_by(run, assay_name, name, SNP) %>%
+    mutate(.snp_pos  = readr::parse_number(SNP),
+           .prio     = ifelse(position == .snp_pos, 1L, 0L),
+           .keep_pos = position[order(-.prio, -depth)][1]) %>%
+    filter(position == .keep_pos) %>%
+    ungroup() %>%
+    select(-.snp_pos, -.prio, -.keep_pos)
+
   # 5. Logical Branching for Coverage vs SNP
   Background <- Background %>%
     mutate(
