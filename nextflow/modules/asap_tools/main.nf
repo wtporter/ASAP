@@ -65,7 +65,7 @@ process PROCESS_XML_R {
 
     script:
     """
-    process_xml.R ${xml} ${proportion} ${sample_id}
+    process_xml.R ${xml} ${proportion} ${sample_id} ${params.file_name}
     """
 }
 

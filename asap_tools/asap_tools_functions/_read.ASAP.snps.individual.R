@@ -1,10 +1,10 @@
 library(xml2)
 library(tidyverse)
 
-read.ASAP.snps.individual <- function(XML) {
+read.ASAP.snps.individual <- function(XML, run_name = "Individual_XML_processing") {
   Out      <- data.frame()
   xml_data <- read_xml(XML, options = "HUGE")
-  Run_Info <- data.frame(run = "Individual_XML_processing")
+  Run_Info <- data.frame(run = run_name)
 
   Sample_Node <- xml_data
 

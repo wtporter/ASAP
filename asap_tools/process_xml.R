@@ -15,19 +15,20 @@ source(file.path(.functions_dir, "_ASAP.get.quality.discards.R"))
 
 # Capture arguments passed from Nextflow
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 3) {
-  stop("Usage: process_xml.R <xml_file> <min_snp> <sample_id>")
+if (length(args) < 4) {
+  stop("Usage: process_xml.R <xml_file> <min_snp> <sample_id> <run_name>")
 }
 
 # Assign the arguments to variables
 xml_file   <- args[1]
 min_snp    <- as.numeric(args[2])*100
 sample_id  <- args[3]
+run_name   <- args[4]
 
 
 # 1. Individual Processing
-ASAP <- read.ASAP.individual(xml_file)
-SNPS <- read.ASAP.snps.individual(xml_file)
+ASAP <- read.ASAP.individual(xml_file, run_name)
+SNPS <- read.ASAP.snps.individual(xml_file, run_name)
 
 # Define the columns that SHOULD be numeric
 asap_numeric_names <- c("total_reads", "trimmed_reads", "mapped_reads", "unassigned_reads", "unmapped_reads",
