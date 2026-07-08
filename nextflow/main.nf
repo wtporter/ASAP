@@ -105,9 +105,9 @@ workflow {
     
     // --- STEP 1: FastQC Initial ---
     def ch_for_fastqc_initial = ch_raw_reads_for_pipeline
-        .map { meta, reads -> [ meta.clone() << [status: 'initial'], reads ] } 
-    
-    FASTQC_INITIAL(ch_for_fastqc_initial)
+        .map { meta, reads -> [ meta.clone() << [status: 'initial'], reads ] }
+
+    if (!params.skip_fastqc) FASTQC_INITIAL(ch_for_fastqc_initial)
 
     // --- STEP 2: Trimming Branch ---
     def ch_for_fastqc_post
@@ -142,8 +142,8 @@ workflow {
         error "Unknown technology: ${params.technology}. Valid: illumina, ont, pacbio"
     }
 
-    // --- STEP 3: Rerun Fastqc --- 
-    FASTQC_POST(ch_for_fastqc_post)
+    // --- STEP 3: Rerun Fastqc ---
+    if (!params.skip_fastqc) FASTQC_POST(ch_for_fastqc_post)
 
     // --- STEP 4: Align reads ---
     def ch_aligned_with_meta
@@ -396,13 +396,18 @@ workflow {
     if (params.ivar || params.ivar_consensus) { IVAR_CONSENSUS (ch_bam_for_ivar, ref_fasta, true) }
 
     // --- STEP 13: MultiQC ---
-    MULTIQC (
-        FASTQC_INITIAL.out.zip.map{ it[1] }.mix(FASTQC_POST.out.zip.map{ it[1] })
-            .mix(ch_trim_json_for_multiqc.map{ it[1] })
+    if (!params.skip_multiqc) {
+        // FASTQC zips are only available when FastQC ran; always include fastp
+        // JSON and alignment flagstats.
+        def ch_multiqc_files = ch_trim_json_for_multiqc.map{ it[1] }
             .mix(ch_flagstats.map{ it[1] })
-            .collect(),
-        [], [], [], [], []
-    )
+        if (!params.skip_fastqc) {
+            ch_multiqc_files = FASTQC_INITIAL.out.zip.map{ it[1] }
+                .mix(FASTQC_POST.out.zip.map{ it[1] })
+                .mix(ch_multiqc_files)
+        }
+        MULTIQC ( ch_multiqc_files.collect(), [], [], [], [], [] )
+    }
 }
 
 // Sub-workflows

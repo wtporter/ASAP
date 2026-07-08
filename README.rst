@@ -622,6 +622,11 @@ MultiQC [CITATION]_ aggregates reports from FastQC (initial and post-trim),
 fastp/fastplong JSON, and SAMtools flagstat into a single interactive HTML report,
 published to ``<outdir>/sample_reports/multiqc/``.
 
+**FastQC and MultiQC are skipped by default** (``--skip_fastqc`` and
+``--skip_multiqc`` both default to ``true``). To enable them, pass
+``--skip_fastqc false`` and/or ``--skip_multiqc false``. When FastQC is skipped but
+MultiQC runs, the MultiQC report is built from fastp JSON and flagstat only.
+
 ----
 
 Unique Functionality

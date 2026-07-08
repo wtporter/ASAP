@@ -12,7 +12,9 @@
         "reference_input": { "type": ["string"], "description": "Path to a reference input (JSON, fasta, excel, or Genbank files). NOTE: a single fasta, excel, JSON is required. For Genbank files, multiple can be specified, but the command needs ' ' to prevent shell script issues." },
         "outdir": { "type": "string", "default": "ASAP_Results", "description": "Output directory." },
         "file_name": { "type": "string", "default": "ASAP_Output", "description": "Meaningful name for reports." },
-        "technology": { "type": "string", "enum": ["illumina", "ont", "ont.v14", "pacbio"], "default": "illumina", "description": "Technology to guide workflow. Guides QC and alignment."}
+        "technology": { "type": "string", "enum": ["illumina", "ont", "ont.v14", "pacbio"], "default": "illumina", "description": "Technology to guide workflow. Guides QC and alignment."},
+        "skip_fastqc": { "type": "boolean", "default": true, "description": "Skip FastQC (both the initial and post-trim runs). Enabled (skipped) by default; set false to run FastQC." },
+        "skip_multiqc": { "type": "boolean", "default": true, "description": "Skip the MultiQC aggregate report. Enabled (skipped) by default; set false to run MultiQC." }
       },
       "required": ["read_dir", "reference_input"]
     },
