@@ -80,12 +80,18 @@ process MASK_PRIMERS {
     tuple val(sample_id), path("${bamfile.getBaseName()}_primerMasked.bam"), path("${bamfile.getBaseName()}_primerMasked.bam.bai"), emit: mask_primers_output
     tuple val(sample_id), path("primer_masking.tsv"), path("primer_masking.log"), emit: mask_primers_logging
     tuple val(sample_id), path("primer_masking_stats.tsv"), emit: mask_primers_stats
+    tuple val(sample_id), path("${sample_id}_masked_reads_per_primer.tsv"), emit: mask_primers_primer_stats
 
     script:
     def mask_bam_string = params.mask_bam ? "--mask-bam" : "--no-mask-bam"
     def ponly_string = params.primer_only ? "--primer-only" : "--no-primer-only"
     """
-    maskPrimers.py -b ${bamfile} -p ${primer_file} --wiggle ${params.wiggle} ${mask_bam_string} ${ponly_string} 
+    maskPrimers.py -b ${bamfile} -p ${primer_file} --wiggle ${params.wiggle} ${mask_bam_string} ${ponly_string}
+
+    # Per-sample masked-reads-per-primer report (prepend sample_id so the same
+    # file also feeds the combined cross-sample report via collectFile).
+    awk -v s="${sample_id}" 'BEGIN{OFS="\\t"} NR==1{print "sample_id", \$0; next} {print s, \$0}' \\
+        primer_masking_primer_stats.tsv > ${sample_id}_masked_reads_per_primer.tsv
     """
 }
 

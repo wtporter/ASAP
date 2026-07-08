@@ -16,7 +16,7 @@ include {
     PREPARE_ASAP_JSON; GENERATE_REFERENCE_FASTA; MASK_PRIMERS; IDENTITY_FILTER; SMOR; SMOR_CORRECTION;
     PROCESS_BAM; OUTPUT_COMBINER; FORMAT_OUTPUT
 } from './modules/asap'
-include { PROCESS_XML_R; PROCESS_COMBINE_RDATA; PROCESS_GENERATE_COV_TABLE; PROCESS_GENERATE_FASTA; PROCESS_GENERATE_SNP_TABLE; PROCESS_SNPS_TO_AMINOACIDS; PROCESS_QC_PLOTS; PROCESS_SNP_PLOTS; PROCESS_FASTP_PANEL } from './modules/asap_tools'
+include { GENERATE_PRIMER_BED; PROCESS_XML_R; PROCESS_COMBINE_RDATA; PROCESS_GENERATE_COV_TABLE; PROCESS_GENERATE_FASTA; PROCESS_GENERATE_SNP_TABLE; PROCESS_SNPS_TO_AMINOACIDS; PROCESS_QC_PLOTS; PROCESS_SNP_PLOTS; PROCESS_FASTP_PANEL } from './modules/asap_tools'
 include { IVAR_TRIM } from './modules/ivar/trim/'
 include { IVAR_VARIANTS } from './modules/ivar/variants/'
 include { IVAR_CONSENSUS } from './modules/ivar/consensus/'
@@ -197,11 +197,38 @@ workflow {
     def fastp_stats_by_id = ch_trim_json_for_multiqc.map { meta, json -> [ meta.id, json ] }
 
     // --- Optional STEP 5: Primer masking ---
-    def primer_bed_path = params.primer_file ? file(params.primer_file).toAbsolutePath() : null
+    // --primer_file accepts either a ready-made 6-column BED or a 3-column primer
+    // CSV (primer_name, direction, sequence). A .csv is auto-detected and converted
+    // to a BED by GENERATE_PRIMER_BED (primer search against the pipeline reference).
+    // effective_primer_bed_ch is a value channel reused by masking, iVar trim, and
+    // the SNP table (GENERATE_PRIMER_BED emits a value channel since its inputs are
+    // value channels).
     def null_file = file("${baseDir}/bin/null")
+    def effective_primer_bed_ch
+    if (params.primer_file && file(params.primer_file).name.toLowerCase().endsWith('.csv')) {
+        effective_primer_bed_ch =
+            GENERATE_PRIMER_BED(Channel.value(file(params.primer_file).toAbsolutePath()), ref_fasta).bed
+    } else if (params.primer_file) {
+        effective_primer_bed_ch = Channel.value(file(params.primer_file).toAbsolutePath())
+    } else {
+        effective_primer_bed_ch = Channel.value(null_file)
+    }
     if(params.mask_primers || (params.primer_file && params.mask_primers != false)) {
-        MASK_PRIMERS(aligned_bams.combine(Channel.value(primer_bed_path)))
+        MASK_PRIMERS(aligned_bams.combine(effective_primer_bed_ch))
         aligned_bams = MASK_PRIMERS.out.mask_primers_output
+
+        // Combined cross-sample report: masked reads per primer per reference.
+        // Each per-sample file carries a sample_id column, so collectFile merges
+        // them under a single header.
+        MASK_PRIMERS.out.mask_primers_primer_stats
+            .map { sample_id, stats -> stats }
+            .collectFile(
+                name: "${params.file_name}_masked_reads_per_primer.tsv",
+                storeDir: "${params.outdir}/sample_reports/general_reports",
+                keepHeader: true,
+                skip: 1,
+                sort: true
+            )
     }
     def primer_stats_by_id = (params.mask_primers || (params.primer_file && params.mask_primers != false))
         ? MASK_PRIMERS.out.mask_primers_stats.map { id, f -> [id, f] }
@@ -326,7 +353,8 @@ workflow {
                 }
 
                 // 3. Handle Primer BED (Optional)
-                def primer_bed_ch = params.primer_file ? file(params.primer_file) : file("${baseDir}/bin/null")
+                // Reuse the effective BED (generated from CSV, or the supplied BED, or null_file)
+                def primer_bed_ch = effective_primer_bed_ch
 
                 // 4. Run the SNP Table Process
                 // This now runs regardless of whether GB files exist
@@ -357,7 +385,7 @@ workflow {
     // --- STEP 10: iVAR Trimming ---
     def ch_bam_for_ivar
     if (params.ivar || params.ivar_trim) {
-        IVAR_TRIM (ch_split.ivar, primer_bed_path)
+        IVAR_TRIM (ch_split.ivar, effective_primer_bed_ch)
         ch_bam_for_ivar = IVAR_TRIM.out.bam
     } else {
         ch_bam_for_ivar = ch_split.ivar.map { meta, bam, bai -> [meta, bam] }

@@ -82,6 +82,12 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
         return samdata
     primers["PrimerDirection"] = np.char.upper(primers["PrimerDirection"])
     primer_stats = []
+    # Map each primer name to its (normalized) declared direction, and prepare a
+    # per-(reference, primer) masked-read counter for the per-primer stats report.
+    name_dir = {}
+    for pn, pd in zip(np.atleast_1d(primers["PrimerName"]), np.atleast_1d(primers["PrimerDirection"])):
+        name_dir[str(pn)] = str(pd)
+    masked_counts = {}
     # for each ref in bam
     for chrom in samdata.references:
         # check that all chroms are accounted for in input file
@@ -92,6 +98,11 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
             # Separate forward and reverse primers for the current chromosome
             forward_primers = primers_for_chrom[primers_for_chrom["PrimerDirection"] == "F"]
             reverse_primers = primers_for_chrom[primers_for_chrom["PrimerDirection"] == "R"]
+
+            # Seed a 0 count for every primer on this reference so the per-primer
+            # report includes primers that never masked a read.
+            for pn in np.atleast_1d(primers_for_chrom["PrimerName"]):
+                masked_counts.setdefault((chrom, str(pn)), 0)
 
             no_primer = 0
             primer_found = 0
@@ -123,6 +134,7 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
                     primer_masked = True
                     # Get the specific primer name
                     primer_name = forward_primers["PrimerName"][read_start_in_forward_primer][0]
+                    masked_counts[(chrom, str(primer_name))] = masked_counts.get((chrom, str(primer_name)), 0) + 1
                     primer_end_ref_pos = int(forward_primers["End"][read_start_in_forward_primer].max())
                     aligned_pairs = read.get_aligned_pairs()
                     target_idx = next((i for i, align in enumerate(aligned_pairs) if align[1] == primer_end_ref_pos), None)
@@ -148,6 +160,7 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
                     primer_masked = True
                     # Get the specific primer name
                     primer_name = reverse_primers["PrimerName"][read_end_in_reverse_primer][0]
+                    masked_counts[(chrom, str(primer_name))] = masked_counts.get((chrom, str(primer_name)), 0) + 1
                     primer_start_ref_pos = int(reverse_primers["Start"][read_end_in_reverse_primer].min())
                     aligned_pairs = read.get_aligned_pairs()
                     target_idx = next((i for i, align in enumerate(aligned_pairs) if align[1] == primer_start_ref_pos), None)
@@ -186,6 +199,12 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
         stats_out.write("ref_name\tprimer_reads\tno_primer_reads\n")
         for row in primer_stats:
             stats_out.write("\t".join(str(x) for x in row) + "\n")
+    # Per-primer, per-reference masked-read counts (includes primers that masked
+    # zero reads). Consumed by the pipeline to build per-sample and combined reports.
+    with open("primer_masking_primer_stats.tsv", "w") as primer_out:
+        primer_out.write("ref_name\tprimer_name\tdirection\tmasked_reads\n")
+        for (chrom, pn) in sorted(masked_counts):
+            primer_out.write(f"{chrom}\t{pn}\t{name_dir.get(pn, '')}\t{masked_counts[(chrom, pn)]}\n")
     if mask_bases:
         pysam.sort("-o", outfile, outfile)
     pysam.index(outfile)

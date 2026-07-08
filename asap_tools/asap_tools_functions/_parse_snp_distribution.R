@@ -7,16 +7,14 @@ library(tidyverse)
 parse_snp_distribution <- function(snps_df) {
   snps_df$snp_distribution[is.na(snps_df$snp_distribution)] <- "A=0, T=0, C=0, G=0, _=0"
 
-  snps_df <- snps_df %>% mutate(space_count = str_count(snp_distribution, " "))
-  max_spaces <- max(snps_df$space_count, na.rm = TRUE)
-
+  # separate_longer_delim expands each distribution to one row per allele directly.
+  # Avoid separate()+pivot_longer(): that first builds a (1 + max spaces)-wide frame
+  # for every row, exploding to a transient ~150M-row / >20GB peak when indel-rich
+  # positions push the allele count to 50+.
   snps_df %>%
-    relocate(snp_distribution, .after = last_col()) %>%
-    separate(snp_distribution, into = paste0("Dist", 1:(1 + max_spaces)), sep = ", ", fill = "right") %>%
-    pivot_longer(starts_with("Dist"), names_to = "Temp", values_to = "Dist") %>%
-    select(-Temp) %>%
-    filter(!is.na(Dist)) %>%
-    separate(Dist, into = c("Call", "n"), sep = "=") %>%
+    separate_longer_delim(snp_distribution, delim = ", ") %>%
+    separate_wider_delim(snp_distribution, delim = "=", names = c("Call", "n"),
+                         too_many = "merge", too_few = "align_start") %>%
     mutate(snp_proportion = 100 * (as.numeric(n) / as.numeric(location_depth))) %>%
     mutate(SNP = paste0(snp_reference, snp_position, Call)) %>%
     filter(snp_reference != Call) %>%

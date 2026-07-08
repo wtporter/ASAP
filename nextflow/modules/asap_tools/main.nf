@@ -1,5 +1,31 @@
 #! /usr/bin/env nextflow
 
+process GENERATE_PRIMER_BED {
+    tag "primer_bed"
+    label 'process_low'
+
+    // Publish both the generated BED and the primer-search results to the results dir
+    publishDir "${params.outdir}/primer_bed", mode: 'copy'
+
+    input:
+    path primer_csv
+    path reference_fasta
+
+    output:
+    path "*_primers.bed",               emit: bed
+    path "*_primer_search_results.csv", emit: results
+
+    script:
+    """
+    process_primers_to_bed.R \\
+        ${primer_csv} \\
+        ${reference_fasta} \\
+        ${params.file_name} \\
+        ${params.primer_max_mismatch} \\
+        ${task.cpus}
+    """
+}
+
 process PROCESS_XML_R {
     tag "$sample_id"
     label 'process_low'

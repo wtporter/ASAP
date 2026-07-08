@@ -55,6 +55,7 @@ ASAP/
 │   ├── process_asaptools_fasta_export.R  # Consensus FASTA export per assay
 │   ├── process_asaptools_snps_amino_acids.R  # SNP → gene position → AA translation
 │   ├── process_asaptools_snp_table.R    # Final SNP table (CSV ± Excel)
+│   ├── process_primers_to_bed.R # Primer CSV → primer search → 6-col BED (self-contained)
 │   └── asap_tools_functions/    # Shared R functions (sourced by scripts above)
 │       ├── _read.ASAP.individual.R      # Parse per-amplicon metrics from XML
 │       ├── _read.ASAP.snps.individual.R # Parse SNP-level data including codon_merge XML
@@ -124,7 +125,11 @@ BWA (`params.aligner = bwa`), or minimap2 (auto-selected for ONT/PacBio, or
 forced with `params.aligner = minimap2`). After alignment, a conditional
 cascade applies optional filters in sequence:
 
-1. `MASK_PRIMERS` — if `params.mask_primers` or `params.primer_file` is set
+1. `MASK_PRIMERS` — if `params.mask_primers` or `params.primer_file` is set.
+   When `params.primer_file` is a `.csv`, `GENERATE_PRIMER_BED` runs first to
+   build the BED (see §3.3); the resulting value channel
+   (`effective_primer_bed_ch`) is shared by masking, `IVAR_TRIM`, and
+   `PROCESS_GENERATE_SNP_TABLE`.
 2. `IDENTITY_FILTER` — if `params.identity != null`
 3. `SMOR` or `SMOR_CORRECTION` — if `params.smor` or `params.smor_correction`
    (`SMOR_CORRECTION` takes precedence over `SMOR`)
@@ -165,7 +170,7 @@ trimmer JSON, and alignment flagstats into a QC report.
 |---|---|---|---|---|
 | `PREPARE_ASAP_JSON` | `prepareJSONInput_nextflow.py` | FASTA/GenBank/Excel reference(s) | `assay_input.json` | format auto-detected |
 | `GENERATE_REFERENCE_FASTA` | `assayInfo.py` | `assay_input.json` | `reference.fasta` | always |
-| `MASK_PRIMERS` | `maskPrimers.py` | BAM+BAI, primer BED | masked BAM+BAI, `primer_masking_stats.tsv` | `params.primer_file`, `params.wiggle`, `params.mask_bam`, `params.primer_only` |
+| `MASK_PRIMERS` | `maskPrimers.py` | BAM+BAI, primer BED | masked BAM+BAI, `primer_masking_stats.tsv`, `{id}_masked_reads_per_primer.tsv` (per-primer/ref counts; also gathered into `sample_reports/general_reports/{name}_masked_reads_per_primer.tsv` via `collectFile` in `main.nf`) | `params.primer_file`, `params.wiggle`, `params.mask_bam`, `params.primer_only` |
 | `IDENTITY_FILTER` | `identityFilter.py` | BAM+BAI | filtered BAM+BAI, `identity_filter_stats.tsv` | `params.identity`, `params.filter_pairs` |
 | `SMOR` | `generateSMORbam.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor`, `params.fill_character` |
 | `SMOR_CORRECTION` | `generateSMORbam_correction.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor_correction`, `params.qual_diff_threshold` |
@@ -177,6 +182,7 @@ trimmer JSON, and alignment flagstats into a QC report.
 
 | Process | Script | Key inputs | Key outputs | Governing params |
 |---|---|---|---|---|
+| `GENERATE_PRIMER_BED` | `process_primers_to_bed.R` | primer CSV (`primer_name,direction,sequence`), reference FASTA | `{name}_primers.bed`, `{name}_primer_search_results.csv`, `{name}_primer_match_summary.csv` (wide: matches per primer per reference) (→ `<outdir>/primer_bed/`) | `params.primer_file` ends in `.csv`, `params.primer_max_mismatch`, `task.cpus` |
 | `PROCESS_XML_R` | `process_xml.R` | per-sample XML, min proportion | `{id}_XML_Data.Rdata`, `{id}_Summary.csv` | `params.proportion` |
 | `PROCESS_COMBINE_RDATA` | `process_combine_rdata.R` | all Rdata files (gathered), optional POI CSV | `{name}_ASAP_Data.Rdata`, `{name}_Summary.csv` | `params.asaptools_positions_of_interest`, `params.file_name` |
 | `PROCESS_GENERATE_COV_TABLE` | `process_asaptools_cov_table.R` | combined Rdata | `*_Coverage_Report.xlsx` | `params.asaptools_cov_table`, `params.depth` |
@@ -247,8 +253,12 @@ regions are masked by zeroing the quality array; with `--mask-bam`, the
 corresponding sequence bases are also replaced with `'N'`. Uses
 `get_aligned_pairs()` to accurately map reference to query coordinates.
 
-**Outputs**: `primer_masking.tsv` (per-read log) and `primer_masking_stats.tsv`
-(per-reference aggregate — consumed by `newBamProcessor.py` via `--primer-stats`).
+**Outputs**: `primer_masking.tsv` (per-read log), `primer_masking_stats.tsv`
+(per-reference aggregate — consumed by `newBamProcessor.py` via `--primer-stats`),
+and `primer_masking_primer_stats.tsv` (per-reference **per-primer** masked-read
+counts: `ref_name, primer_name, direction, masked_reads`; includes primers that
+masked zero reads). The pipeline prepends a `sample_id` column to the last file for
+its per-sample and combined masked-reads-per-primer reports.
 
 ### `identityFilter.py`
 
@@ -738,6 +748,24 @@ process_combine_rdata.R (gather all samples)
                      <prefix>_SNP_Linelist_{Included,All}_Samples.csv
                      <prefix>_SNP_Table_Final.xlsx  (if --xls)
 ```
+
+**Note — `process_primers_to_bed.R` is separate from this flow.** It is a
+pre-alignment utility (Nextflow process `GENERATE_PRIMER_BED`), not part of the
+combined-Rdata post-processing chain above. Unlike the other scripts it is
+**self-contained** (it inlines `find.primers` / `find.diff.in.seq` / a 6-column
+`create.asap.bed.file` rather than `source()`-ing helpers), so it runs identically
+standalone or from `bin/`. It reads a primer CSV (`primer_name, direction,
+sequence`), searches the reference with `Biostrings::matchPattern` (both strands,
+`--primer_max_mismatch` mismatches/indels), and writes a headerless 6-column BED
+(0-based start; strand `F→+`, `R→-`), a full search-results CSV, and a wide
+`*_primer_match_summary.csv` (one row per primer; one match-count column per reference
+sequence plus `total_matches`). The primer loop
+is parallelized over primers via `foreach %dopar%` with forked workers
+(`registerDoParallel(task.cpus)`); the reference is shared copy-on-write. Dependencies
+(`tidyverse`, `Biostrings`, `foreach`, `data.table`, `doParallel`) are all already in
+`modules/asap_tools/r_env.yml`.
+
+CLI: `process_primers_to_bed.R <primer_csv> <reference_fasta> <prefix> [max_mismatch=2] [cores=1]`
 
 ### 6.2 Per-Sample XML Parsing
 

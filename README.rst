@@ -36,9 +36,14 @@ antimicrobial resistance (AMR) detection and viral whole-genome assembly.
 **Continued Development:**
 
 1. Elimination of conda env creation from module YMLs, replaced by containerized tools and a single Nextflow environment for pipeline execution.
-2. Automated bed file creation for primer masking based on primers, allowing reference search and bed file creation.
-3. Expansion of test datasets and tutorials for user education and reference.
-4. Consider centralization of reports into single HTML report.
+2. Expansion of test datasets and tutorials for user education and reference.
+3. Consider centralization of reports into single HTML report.
+
+**Recently Added:**
+
+1. Automated bed file creation for primer masking based on primer sequences —
+   ``--primer_file`` now accepts a primer CSV, searching the reference and building the
+   BED automatically (see `Step 3`_).
 
 ----
 
@@ -357,29 +362,65 @@ Step 3 — Primer Masking *(optional)*
 
 Primer-derived base calls are masked in aligned reads to prevent them from inflating
 or distorting SNP frequencies or consensus sequences. A BED-format TSV file specifying
-primer coordinates is required.
+primer coordinates is required — but ``--primer_file`` also accepts a **primer CSV**
+(see `Generating a primer BED from a CSV`_), in which case ASAP locates the primers
+against the reference and builds the BED for you.
 
 For each read, if the alignment start (R1) or end (R2) falls within ``--wiggle`` bases
 of a primer boundary, the primer region is masked: base quality scores are set to 0
 and (by default) bases are replaced with ``N``. A per-amplicon log file tallies reads
 with and without detected primer sequences, confirming correct masking.
 
-+--------------------+-----------+-------------------------------------------------------+
-| Parameter          | Default   | Description                                           |
-+====================+===========+=======================================================+
-| ``--primer_file``  | ``null``  | Path to primer BED file (required to enable masking)  |
-+--------------------+-----------+-------------------------------------------------------+
-| ``--mask_primers`` | ``null``  | Enable primer masking (auto-enabled when              |
-|                    |           | ``--primer_file`` is provided; set ``false`` to force |
-|                    |           | disable)                                              |
-+--------------------+-----------+-------------------------------------------------------+
-| ``--wiggle``       | ``9``     | Bases outside primer boundary to include in mask      |
-+--------------------+-----------+-------------------------------------------------------+
-| ``--mask_bam``     | ``true``  | Replace masked bases with ``N`` in BAM sequence field |
-+--------------------+-----------+-------------------------------------------------------+
-| ``--primer_only``  | ``false`` | Retain only primer-overlapping reads; discard all     |
-|                    |           | others after masking                                  |
-+--------------------+-----------+-------------------------------------------------------+
+Masking also reports the **number of masked reads per primer per reference**: a
+per-sample table ``<sample>_masked_reads_per_primer.tsv`` (under
+``sample_info/<sample>/mask_primers/``) and a combined
+``<name>_masked_reads_per_primer.tsv`` across all samples (under
+``sample_reports/general_reports/``), each with columns ``sample_id, ref_name,
+primer_name, direction, masked_reads``. Primers that masked zero reads are included.
+
++--------------------------+-----------+-------------------------------------------------------+
+| Parameter                | Default   | Description                                           |
++==========================+===========+=======================================================+
+| ``--primer_file``        | ``null``  | Path to a primer BED **or** a primer CSV (required to |
+|                          |           | enable masking). A ``.csv`` is auto-detected and      |
+|                          |           | converted to a BED (see below).                       |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--primer_max_mismatch``| ``2``     | CSV→BED only: max mismatches allowed when locating    |
+|                          |           | each primer in the reference (ambiguity codes count   |
+|                          |           | as mismatches)                                        |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--mask_primers``       | ``null``  | Enable primer masking (auto-enabled when              |
+|                          |           | ``--primer_file`` is provided; set ``false`` to force |
+|                          |           | disable)                                              |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--wiggle``             | ``9``     | Bases outside primer boundary to include in mask      |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--mask_bam``           | ``true``  | Replace masked bases with ``N`` in BAM sequence field |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--primer_only``        | ``false`` | Retain only primer-overlapping reads; discard all     |
+|                          |           | others after masking                                  |
++--------------------------+-----------+-------------------------------------------------------+
+
+.. _Generating a primer BED from a CSV:
+
+**Generating a primer BED from a CSV**
+
+If you only have primer sequences (not coordinates), pass a CSV to ``--primer_file``
+with a ``.csv`` extension and three columns: ``primer_name``, ``direction``
+(``F``/``R``), and ``sequence``. Before masking, ASAP runs ``GENERATE_PRIMER_BED``,
+which searches the pipeline reference (both strands, allowing
+``--primer_max_mismatch`` mismatches/indels) for each primer and writes a
+pipeline-ready 6-column BED. Three files are published to ``<outdir>/primer_bed/``:
+
+- ``<name>_primers.bed`` — the generated 6-column primer BED.
+- ``<name>_primer_search_results.csv`` — the full search table (found and not-found
+  primers, both orientations, with per-match mismatch details for QC).
+- ``<name>_primer_match_summary.csv`` — one row per primer with the **number of
+  matches per reference sequence** (one column per reference) and a
+  ``total_matches`` column; primers that matched nothing show an all-zero row.
+
+The same generated BED is reused by primer masking, iVar trimming, and the SNP table.
+A ready-made BED (any non-``.csv`` file) is used directly, unchanged.
 
 Step 4 — Percent-Identity Filtering *(optional)*
 -------------------------------------------------
@@ -610,7 +651,9 @@ Primer masking prevents primer-derived base calls from distorting SNP frequencie
 consensus sequences — critical for amplicon assays where primers are included in
 the sequenced region. A per-amplicon log file tallies reads with and without detected
 primer sequences, enabling confirmation that the correct primer regions are being masked.
-See `Step 3`_ for full parameter details.
+Primer coordinates may be supplied directly as a BED, or generated automatically from a
+primer-sequence CSV (``--primer_file`` accepts either). See `Step 3`_ for full parameter
+details.
 
 Percent-Identity Filtering
 ---------------------------
