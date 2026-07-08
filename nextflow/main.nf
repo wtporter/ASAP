@@ -16,7 +16,7 @@ include {
     PREPARE_ASAP_JSON; GENERATE_REFERENCE_FASTA; MASK_PRIMERS; IDENTITY_FILTER; SMOR; SMOR_CORRECTION;
     PROCESS_BAM; OUTPUT_COMBINER; FORMAT_OUTPUT
 } from './modules/asap'
-include { GENERATE_PRIMER_BED; PROCESS_XML_R; PROCESS_COMBINE_RDATA; PROCESS_GENERATE_COV_TABLE; PROCESS_GENERATE_FASTA; PROCESS_GENERATE_SNP_TABLE; PROCESS_SNPS_TO_AMINOACIDS; PROCESS_QC_PLOTS; PROCESS_SNP_PLOTS; PROCESS_FASTP_PANEL } from './modules/asap_tools'
+include { GENERATE_PRIMER_BED; COMBINE_MASKED_READS_PER_PRIMER; PROCESS_XML_R; PROCESS_COMBINE_RDATA; PROCESS_GENERATE_COV_TABLE; PROCESS_GENERATE_FASTA; PROCESS_GENERATE_SNP_TABLE; PROCESS_SNPS_TO_AMINOACIDS; PROCESS_QC_PLOTS; PROCESS_SNP_PLOTS; PROCESS_FASTP_PANEL } from './modules/asap_tools'
 include { IVAR_TRIM } from './modules/ivar/trim/'
 include { IVAR_VARIANTS } from './modules/ivar/variants/'
 include { IVAR_CONSENSUS } from './modules/ivar/consensus/'
@@ -217,18 +217,14 @@ workflow {
         MASK_PRIMERS(aligned_bams.combine(effective_primer_bed_ch))
         aligned_bams = MASK_PRIMERS.out.mask_primers_output
 
-        // Combined cross-sample report: masked reads per primer per reference.
-        // Each per-sample file carries a sample_id column, so collectFile merges
-        // them under a single header.
-        MASK_PRIMERS.out.mask_primers_primer_stats
-            .map { sample_id, stats -> stats }
-            .collectFile(
-                name: "${params.file_name}_masked_reads_per_primer.tsv",
-                storeDir: "${params.outdir}/sample_reports/general_reports",
-                keepHeader: true,
-                skip: 1,
-                sort: true
-            )
+        // Combined cross-sample report: masked reads per primer, pivoted WIDE so
+        // each column is a sample and each row is a (ref, primer, direction).
+        // Gather every per-sample long-format stats file and pivot in one step.
+        COMBINE_MASKED_READS_PER_PRIMER(
+            MASK_PRIMERS.out.mask_primers_primer_stats
+                .map { sample_id, stats -> stats }
+                .collect()
+        )
     }
     def primer_stats_by_id = (params.mask_primers || (params.primer_file && params.mask_primers != false))
         ? MASK_PRIMERS.out.mask_primers_stats.map { id, f -> [id, f] }

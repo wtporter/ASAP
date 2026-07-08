@@ -4,7 +4,8 @@ process GENERATE_PRIMER_BED {
     tag "primer_bed"
     label 'process_low'
 
-    // Publish both the generated BED and the primer-search results to the results dir
+    // Publish the generated BED, the full primer-search results, and the
+    // per-primer match-count summary (matches per primer per reference) to the results dir
     publishDir "${params.outdir}/primer_bed", mode: 'copy'
 
     input:
@@ -14,6 +15,7 @@ process GENERATE_PRIMER_BED {
     output:
     path "*_primers.bed",               emit: bed
     path "*_primer_search_results.csv", emit: results
+    path "*_primer_match_summary.csv",  emit: summary
 
     script:
     """
@@ -23,6 +25,27 @@ process GENERATE_PRIMER_BED {
         ${params.file_name} \\
         ${params.primer_max_mismatch} \\
         ${task.cpus}
+    """
+}
+
+process COMBINE_MASKED_READS_PER_PRIMER {
+    tag "masked_reads_per_primer"
+    label 'process_low'
+
+    // Cross-sample WIDE report: one row per (ref, primer, direction), one column per sample.
+    publishDir "${params.outdir}/sample_reports/general_reports", mode: 'copy'
+
+    input:
+    path per_sample_stats
+
+    output:
+    path "${params.file_name}_masked_reads_per_primer.tsv", emit: wide
+
+    script:
+    """
+    combine_masked_reads_wide.R \\
+        ${params.file_name}_masked_reads_per_primer.tsv \\
+        ${per_sample_stats}
     """
 }
 

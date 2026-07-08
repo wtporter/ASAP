@@ -92,8 +92,12 @@ find.primers <- function(fasta.path, primer.names, primer.direction, primer.list
 
       ASSAY <- names(sequence_file)[[GENE]]
 
-      Temp <- matchPattern(pattern = PRIMER_SEQUENCE, subject = as.character(sequences),
-                           max.mismatch = max.mismatch, with.indels = T, fixed = TRUE,
+      # fixed = "subject": treat IUPAC ambiguity codes in the PRIMER as wildcards
+      # while keeping the reference literal. This requires a DNAString subject
+      # (passing as.character() disables ambiguity handling and errors on
+      # fixed="subject"), so the raw DNAString `sequences` is passed directly.
+      Temp <- matchPattern(pattern = PRIMER_SEQUENCE, subject = sequences,
+                           max.mismatch = max.mismatch, with.indels = T, fixed = "subject",
                            algorithm = "auto")
 
       if(nrow(data.frame(Temp)) > 0) {
@@ -120,8 +124,8 @@ find.primers <- function(fasta.path, primer.names, primer.direction, primer.list
       }
 
       ## Do reverse compliment search
-      Temp <- matchPattern(pattern = as.character(reverseComplement(DNAString(PRIMER_SEQUENCE))), subject = as.character(sequences),
-                           max.mismatch = max.mismatch, with.indels = T, fixed = TRUE,
+      Temp <- matchPattern(pattern = as.character(reverseComplement(DNAString(PRIMER_SEQUENCE))), subject = sequences,
+                           max.mismatch = max.mismatch, with.indels = T, fixed = "subject",
                            algorithm = "auto")
 
       if(nrow(data.frame(Temp)) > 0) {
