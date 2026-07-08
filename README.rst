@@ -76,23 +76,6 @@ single-nucleotide polymorphism (SNP) tables, and intra-host single-nucleotide va
 - Optional iVAR integration for primer trimming, variant calling, and consensus generation
 - HPC-ready via SLURM with exponential retry and configurable resource scaling
 
-Multi-Reference Analysis
-------------------------
-
-ASAP is designed to analyze multiple amplicon targets simultaneously in a single run.
-This supports:
-
-- **Species co-analysis** — e.g., RSV-A and RSV-B from the same sequencing run
-- **Multi-gene AMR panels** — multiple resistance genes across *M. tuberculosis*
-- **Cross-contamination QC** — include neighboring-species references to detect and quantify cross-contamination between samples
-
-Multi-reference analysis can be enabled by:
-
-- Providing multiple sequences in a multi-FASTA or JSON reference file
-- Specifying multiple GenBank files (``"./refs/*.gb"``)
-- Using the ASAP Excel template with multiple amplicon rows
-- Subsetting output annotation to specific positions via ``--asaptools_positions_of_interest``
-
 ----
 
 Pipeline Summary
@@ -159,6 +142,20 @@ Pipeline Summary
 
 Reference Input Formats
 =======================
+
+ASAP is designed to analyze multiple amplicon targets simultaneously in a single run.
+This supports:
+
+- **Species co-analysis** — e.g., RSV-A and RSV-B from the same sequencing run
+- **Multi-gene AMR panels** — multiple resistance genes across *M. tuberculosis*
+- **Cross-contamination QC** — include neighboring-species references to detect and quantify cross-contamination between samples
+
+Multi-reference analysis can be enabled by:
+
+- Providing multiple sequences in a multi-FASTA or JSON reference file
+- Specifying multiple GenBank files (``"./refs/*.gb"``)
+- Using the ASAP Excel template with multiple amplicon rows
+- Subsetting output annotation to specific positions via ``--asaptools_positions_of_interest``
 
 ASAP accepts four reference formats via ``--reference_input``:
 
