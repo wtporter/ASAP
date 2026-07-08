@@ -273,7 +273,7 @@ workflow {
             .join(primer_stats_by_id)
             .join(identity_stats_by_id)
             .join(smor_stats_by_id)
-        def xml_output = PROCESS_BAM(ch_bam_for_asap.combine(json_ch).combine(Channel.value(gb_file_to_use ?: [])))
+        def xml_output = PROCESS_BAM(ch_bam_for_asap.combine(json_ch).combine(Channel.value(gb_file_to_use ?: null_file)))
         
         // --- ASAP Tools  R Processing ---
         if(params.asaptools_processing) {

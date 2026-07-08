@@ -84,7 +84,7 @@ safe_plot("Coverage Depth", {
                              "<br>Mean Depth (10bp): ", round(depth_avg, 1)))) +
       geom_line(alpha = 0.7) +
       geom_hline(yintercept = MIN_DEPTH, col = "Red", lty = "dashed", alpha = 0.6) +
-      facet_wrap(~assay_name, scales = "free") +
+      facet_wrap(~assay_name, scales = "free_x", ncol = 1) +
       scale_y_log10() +
       theme_bw() +
       theme(legend.position = "none") +
@@ -110,7 +110,7 @@ safe_plot("N Read Proportion", {
                              "<br>~Position: ", position,
                              "<br>Proporion 'N' Reads (10bp window): ", round(n_reads_prop, 1)))) +
     geom_line(alpha = 0.7) +
-    facet_wrap(~assay_name, scales = "free") +
+    facet_wrap(~assay_name, scales = "free_x", ncol = 1) +
     theme_bw() +
     theme(legend.position = "none") +
     labs(y = paste0("Proportion 'N' Reads (", dynamic_k, "bp window)"),
@@ -220,7 +220,7 @@ safe_plot("Alignment Summary", {
     align_base_theme +
     labs(title = "Percentage of Reads", x = "Sample", y = "Percentage (%)", fill = NULL)
 
-  p_align_combined <- (p_align + p_align_pct) +
+  p_align_combined <- (p_align / p_align_pct) +
     plot_layout(guides = "collect") &
     theme(legend.position = "bottom")
   p_align_combined <- p_align_combined + plot_annotation(

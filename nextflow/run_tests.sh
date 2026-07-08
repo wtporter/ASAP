@@ -70,6 +70,15 @@ conda activate ASAP_nextflow_env
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 TEST_FILE="tests/ASAP_EtE.nf.test"
 LOG_DIR="${SCRIPT_DIR}/logs/nf-test"
+
+# Use prebuilt shared conda envs when available (see prebuild_envs.sh). This
+# lets parallel test jobs reuse one env each instead of every job racing to
+# build its own — the cause of the mamba-lock / corrupted-env test failures.
+# If the prebuilt envs are absent, the vars stay unset and Nextflow falls back
+# to building from the module YAMLs (nextflow.config handles the fallback).
+ASAP_ENV_CACHE="${ASAP_ENV_CACHE:-${SCRIPT_DIR}/work/conda_envs}"
+[[ -d "${ASAP_ENV_CACHE}/asap_env" ]] && export ASAP_CONDA_ENV="${ASAP_ENV_CACHE}/asap_env"
+[[ -d "${ASAP_ENV_CACHE}/r_env" ]]    && export R_CONDA_ENV="${ASAP_ENV_CACHE}/r_env"
 TIMESTAMP="$(date '+%Y-%m-%d_%H-%M-%S')"
 SLURM_LABEL="${SLURM_JOB_ID:+_slurm${SLURM_JOB_ID}}"
 LOG_FILE="${LOG_DIR}/run_${TIMESTAMP}${SLURM_LABEL}.log"
