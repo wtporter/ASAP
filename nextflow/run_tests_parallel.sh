@@ -65,6 +65,13 @@ TIMESTAMP="$(date '+%Y-%m-%d_%H-%M-%S')"
 MANIFEST_FILE="${LOG_DIR}/parallel_${TIMESTAMP}_manifest.txt"
 : > "${MANIFEST_FILE}"
 
+# Build the conda envs ONCE up front so the parallel jobs below don't each race
+# to build their own (which contends on the shared mamba pkgs lock and can
+# corrupt half-built envs). Every test job waits for this to succeed (afterok).
+prebuild_job_id="$(sbatch --parsable --job-name="ASAP_prebuild_envs" prebuild_envs.sh)"
+echo "Submitted conda env prebuild job [${prebuild_job_id}] — test jobs wait on it (afterok)."
+echo ""
+
 echo "Submitting ${#TAGS[@]} parallel nf-test jobs (one test per job)..."
 echo ""
 
@@ -74,7 +81,7 @@ for i in "${!TAGS[@]}"; do
     name="${NAMES[$i]}"
     job_name="ASAP_test_${tag}"
 
-    job_id="$(sbatch --parsable --job-name="${job_name}" run_tests.sh --tag "${tag}")"
+    job_id="$(sbatch --parsable --job-name="${job_name}" --dependency="afterok:${prebuild_job_id}" run_tests.sh --tag "${tag}")"
     JOB_IDS+=("${job_id}")
 
     echo "  [${job_id}] ${job_name}  ->  ${name}"

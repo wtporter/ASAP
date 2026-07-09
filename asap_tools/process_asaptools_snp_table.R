@@ -1,10 +1,18 @@
 #!/usr/bin/env Rscript
 
 # Load necessary libraries
-library(tidyverse)
-library(openxlsx)
-library(doParallel)
-library(foreach)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(openxlsx)
+  library(doParallel)
+  library(foreach)
+})
+
+# Resolve path to local function files relative to this script
+.script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
+.functions_dir <- file.path(dirname(.script_path), "asap_tools_functions")
+source(file.path(.functions_dir, "_expand_codon_merges.R"))
+source(file.path(.functions_dir, "_parse_snp_distribution.R"))
 
 # --- Argument Parsing ---
 args <- commandArgs(trailingOnly = TRUE)
@@ -97,21 +105,11 @@ if (BED_FILE == "NA" || BED_FILE == "NULL" || is.null(BED_FILE)) { # !file.exist
 ######################
 # Extract Unique Amino Acids from SNPs
 ######################
-SNPS$snp_distribution[is.na(SNPS$snp_distribution)] <- "A=0, T=0, C=0, G=0, _=0"
-SNPS <- SNPS %>% mutate(space_count = str_count(snp_distribution, " "))
-max_spaces <- max(SNPS$space_count, na.rm = TRUE)
+SNPS <- parse_snp_distribution(SNPS)
 
-SNPS <- SNPS %>%
-  relocate(snp_distribution, .after = last_col()) %>%
-  separate(snp_distribution, into = paste0("Dist", 1:(1 + max_spaces)), sep = ", ", fill = "right") %>%
-  pivot_longer(starts_with("Dist"), names_to = "Temp", values_to = "Dist") %>%
-  select(-Temp) %>%
-  filter(!is.na(Dist)) %>%
-  separate(Dist, into = c("Call", "n"), sep = "=") %>%
-  mutate(snp_proportion = 100*(as.numeric(n)/as.numeric(location_depth))) %>%
-  mutate(SNP = paste0(snp_reference, snp_position, Call)) %>%
-  filter(snp_reference != Call) %>%
-  filter(!is.na(snp_proportion))
+# --- Expand codon-merged SNPs (must match process_asaptools_snps_amino_acids.R
+# so SNP values here line up with Amino_Acids/Gene_SNPS for the join below) ---
+SNPS <- expand_codon_merges(SNPS, MIN_SNP_PERC)
 
 # --- Load Optional AA Data ---
 if (SNP_RDATA == "NULL" || !file.exists(SNP_RDATA) || is.null(SNP_RDATA)) {
@@ -126,16 +124,18 @@ if (SNP_RDATA == "NULL" || !file.exists(SNP_RDATA) || is.null(SNP_RDATA)) {
 
 # Join info
 # Note depending on references there can be 2 records because of overlapping genes.
-AA_Merged <- left_join(Amino_Acids, Gene_SNPS, by = c("assay_name", "SNP"), relationship = "many-to-many") %>% 
-  distinct()
+AA_Merged <- left_join(Amino_Acids, Gene_SNPS, by = c("assay_name", "SNP"), relationship = "many-to-many") %>%
+  distinct() %>%
+  group_by(assay_name, SNP) %>%
+  summarise(across(everything(), ~ paste(unique(na.omit(.x)), collapse = "; ")), .groups = "drop")
 
-SNPS <- left_join(SNPS, AA_Merged, by = c("assay_name", "SNP"), relationship = "many-to-many")
+SNPS <- left_join(SNPS, AA_Merged, by = c("assay_name", "SNP"))
 
 ######################
 # SNP QC & Sample Exclusion
 ######################
 SAMPLE_Exclude <- SNPS %>%
-  filter(snp_proportion > MIN_SNP_PERC, location_depth > MIN_LOCATION_DEPTH) %>%
+  filter(snp_proportion > MIN_SNP_PERC, location_depth >= MIN_LOCATION_DEPTH) %>%
   group_by(assay_name, name) %>%
   tally() %>%
   filter(n > MAX_SNP_COUNT) %>%
@@ -164,7 +164,7 @@ generate_SNP_table <- function(include_only = TRUE) {
   # These are coordinates where at least one sample passed your QC filters
   sig_positions <- SNPS %>%
     filter(as.numeric(snp_proportion) > MIN_SNP_PERC,
-           as.numeric(location_depth) > MIN_LOCATION_DEPTH,
+           as.numeric(location_depth) >= MIN_LOCATION_DEPTH,
            as.numeric(snp_position) %in% positions_of_interest) %>%
     {if (length(valid_refs) > 0) filter(., grepl(paste(valid_refs, collapse="|"), assay_name)) else .} %>%
     select(assay_name, snp_position, SNP, any_of(c("AA", "Gene_SNP", "Gene", "Product"))) %>%
@@ -179,18 +179,42 @@ generate_SNP_table <- function(include_only = TRUE) {
   # This tells us if a SPECIFIC sample has that specific SNP.
   Background <- Background %>%
     left_join(
-      SNPS %>% select(run, assay_name, name, SNP, snp_proportion, snp_depth),
+      SNPS %>% select(run, assay_name, name, SNP, snp_proportion, snp_depth,
+                      any_of(c("snp_call_R1", "snp_call_R2", "snp_call_SE",
+                                "linked_snp_targets", "linked_snp_linkage_pcts",
+                                "linked_snp_co_counts", "linked_snp_shared_depths",
+                                "snp_call_qual_mean", "snp_call_qual_median",
+                                "snp_call_qual_min", "snp_call_qual_max",
+                                "snp_ref_qual_mean", "snp_ref_qual_median",
+                                "snp_ref_qual_min", "snp_ref_qual_max"))),
       by = c("run", "assay_name", "name", "SNP")
     )
   
   Background$snp_proportion[is.na(Background$snp_proportion)] <- 0
-  
+
+  # 4b. Collapse codon-merge position spillover
+  # Codon-merged SNP names can tag one SNP at several genome positions (e.g. T4987C
+  # at 4985 and 4987). The many-to-many coverage join above then reads `depth` from
+  # each of those positions, yielding conflicting snp_prop_final for one
+  # (sample, SNP) -> list-cols in pivot_wider and a write.csv/openxlsx crash. Keep
+  # only the coverage row at the SNP's own position (fall back to deepest-covered if
+  # the encoded position is absent). Preserves every SNP and all overlapping-gene
+  # rows at that position.
+  Background <- Background %>%
+    group_by(run, assay_name, name, SNP) %>%
+    mutate(.snp_pos  = readr::parse_number(SNP),
+           .prio     = ifelse(position == .snp_pos, 1L, 0L),
+           .keep_pos = position[order(-.prio, -depth)][1]) %>%
+    filter(position == .keep_pos) %>%
+    ungroup() %>%
+    select(-.snp_pos, -.prio, -.keep_pos)
+
   # 5. Logical Branching for Coverage vs SNP
   Background <- Background %>%
     mutate(
       snp_prop_final = case_when(
         # CONDITION 1: Depth is too low -> Identify as No Data (NA)
-        depth <= MIN_LOCATION_DEPTH ~ paste0("Low Coverage [SNP:", round(snp_proportion, 2), "%, Depth:", depth, "Depth Threshold:", MIN_LOCATION_DEPTH,"]"),
+        depth < MIN_LOCATION_DEPTH ~ paste0("Low Coverage [SNP:", round(snp_proportion, 2), "%, Depth:", depth, "Depth Threshold:", MIN_LOCATION_DEPTH,"]"),
         
         # CONDITION 2: Depth is good and SNP exists or is 0 -> Identify as Variant (%)
         TRUE ~ as.character(round(snp_proportion, 2))
@@ -202,7 +226,27 @@ generate_SNP_table <- function(include_only = TRUE) {
       )
     )
   
+  # 5b. Format quality columns if present (from base_quality XML nodes)
+  if (all(c("snp_call_qual_mean", "snp_call_qual_median", "snp_call_qual_min", "snp_call_qual_max") %in% names(Background))) {
+    Background <- Background %>%
+      mutate(`SNP Quality [mean(median, min-max)]` = ifelse(!is.na(snp_call_qual_mean),
+                                     sprintf("%.1f (%.1f, %.0f-%.0f)",
+                                             snp_call_qual_mean, snp_call_qual_median,
+                                             snp_call_qual_min, snp_call_qual_max),
+                                     NA_character_))
+  }
+  if (all(c("snp_ref_qual_mean", "snp_ref_qual_median", "snp_ref_qual_min", "snp_ref_qual_max") %in% names(Background))) {
+    Background <- Background %>%
+      mutate(`Reference Quality [mean(median, min-max)]` = ifelse(!is.na(snp_ref_qual_mean),
+                                           sprintf("%.1f (%.1f, %.0f-%.0f)",
+                                                   snp_ref_qual_mean, snp_ref_qual_median,
+                                                   snp_ref_qual_min, snp_ref_qual_max),
+                                           NA_character_))
+  }
+
   #6. Pivot to Wide format
+  # group_by+summarise collapses multi-gene rows (SNP overlapping 2 CDS regions)
+  # so pivot_wider never sees duplicate (id_cols, Sample) pairs -> no list columns
   Wide <- Background %>%
     select(Run = run,
            Assay = assay_name,
@@ -213,12 +257,14 @@ generate_SNP_table <- function(include_only = TRUE) {
            `Amino Acid Change` = any_of("AA"),
            `Primer Region` = Primer,
            `SNP Proportion (%)` = snp_prop_final) %>%
-    distinct() %>%
+    group_by(Run, Assay, Sample, `SNP (Genome)`, `Primer Region`, `SNP Proportion (%)`) %>%
+    summarise(across(everything(), ~ paste(unique(na.omit(.x)), collapse = "; ")),
+              .groups = "drop") %>%
     pivot_wider(names_from = Sample, values_from = `SNP Proportion (%)`)
   
   # 7. Return linelist of SNPS
   SNP_Linelist <- Background %>% 
-    filter(depth > MIN_LOCATION_DEPTH) %>% # Reversed logic for clarity: keep if > min
+    filter(depth >= MIN_LOCATION_DEPTH) %>%
     filter(snp_proportion > MIN_SNP_PERC) %>% 
     filter(SNP %in% sig_positions$SNP)
   
@@ -227,10 +273,24 @@ generate_SNP_table <- function(include_only = TRUE) {
   if (!"AA" %in% names(Background)) Background$AA <- "No GB file provided."
   
   SNP_Linelist <- Background %>% 
-    filter(!depth <= MIN_LOCATION_DEPTH) %>% # Filter Low Depth Samples
+    filter(depth >= MIN_LOCATION_DEPTH) %>%
     filter(snp_proportion > MIN_SNP_PERC) %>% 
     filter(`SNP` %in% sig_positions$SNP) %>% 
-    select(run, assay_name, name, `Primer Region` = Primer, `SNP (Genome)` = SNP, Gene, `SNP (Gene)` = `Gene_SNP`, `Amino Acid Change` = AA, `SNP Depth` = snp_depth, `Location Depth` = depth, `SNP Prevalence` = snp_prop_final)
+    select(run, assay_name, name, `Primer Region` = Primer, `SNP (Genome)` = SNP, Gene, `SNP (Gene)` = `Gene_SNP`, `Amino Acid Change` = AA, `SNP Depth` = snp_depth, `Location Depth` = depth, `SNP Prevalence` = snp_prop_final,
+           any_of(c("snp_call_R1", "snp_call_R2", "snp_call_SE",
+                     "SNP Quality [mean(median, min-max)]",
+                     "Reference Quality [mean(median, min-max)]",
+                     "linked_snp_targets", "linked_snp_linkage_pcts",
+                     "linked_snp_co_counts", "linked_snp_shared_depths"))) %>%
+    rename(any_of(c(
+      "SNP Reads (R1)"      = "snp_call_R1",
+      "SNP Reads (R2)"      = "snp_call_R2",
+      "SNP Reads (SE)"      = "snp_call_SE",
+      "Linked SNP Targets"  = "linked_snp_targets",
+      "Linkage (%)"         = "linked_snp_linkage_pcts",
+      "Co-occurring Count"  = "linked_snp_co_counts",
+      "Shared Read Depth"   = "linked_snp_shared_depths"
+    )))
 
   return(list(Wide, SNP_Linelist))
 }

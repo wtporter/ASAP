@@ -2,11 +2,18 @@
 
 # Load necessary libraries
 # tidyverse for data manipulation, data.table for high-speed binding
-library(tidyverse)
-library(foreach)
-library(doParallel)
-library(data.table)
-library(parallelly)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(foreach)
+  library(doParallel)
+  library(data.table)
+  library(parallelly)
+})
+
+# Resolve path to local function files relative to this script
+.script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
+.functions_dir <- file.path(dirname(.script_path), "asap_tools_functions")
+source(file.path(.functions_dir, "_shorten_sample_names.R"))
 
 # 1. Capture Arguments
 args <- commandArgs(trailingOnly = TRUE)
@@ -73,6 +80,22 @@ combined_list <- foreach(f = files, .packages = c("tidyverse")) %dopar% {
       )) %>%
       ungroup()
     
+    # Guard: the POI CSV's `seqnames` must match the data's `assay_name`.
+    # If they don't overlap at all, the semi_join below silently drops every
+    # row, leaving final_array empty and crashing downstream coverage steps
+    # ~50 minutes later. Fail loudly here, naming both sides of the mismatch.
+    poi_refs   <- unique(as.character(Gene_Positions$reference))
+    data_names <- unique(as.character(temp_env$array_info$assay_name))
+    if (length(data_names) > 0 && !any(data_names %in% poi_refs)) {
+      stop(paste0(
+        "Positions-of-interest reference names do not match the data.\n",
+        "  POI CSV 'seqnames': ", paste(poi_refs,   collapse = ", "), "\n",
+        "  data 'assay_name':  ", paste(data_names, collapse = ", "), "\n",
+        "Fix the 'seqnames' column in ", poi_csv,
+        " to match the reference/assay name."
+      ))
+    }
+
     # filter unneeded array info...
     temp_env$array_info <- temp_env$array_info %>%
       semi_join(Gene_Positions, by = c("position" = "position", "assay_name" = "reference"))
@@ -113,6 +136,14 @@ gc()
 # Merge large Array Info (Depth/Proportions)
 final_array <- as.data.frame(data.table::rbindlist(map(combined_list, "info"), fill = TRUE))
 gc()
+
+# Compute shortened plot labels once against the full cohort so every
+# downstream script/plot uses the same name -> name_short mapping. The full
+# `name` column is left untouched (still used for exports/tables/traceability).
+name_map <- shorten_sample_names(final_asap$name)
+final_asap$name_short  <- name_map[final_asap$name]
+final_snps$name_short  <- name_map[final_snps$name]
+final_array$name_short <- name_map[final_array$name]
 
 # 5. Save Combined Outputs
 # Saving both as a compressed Rdata object and a flat CSV summary

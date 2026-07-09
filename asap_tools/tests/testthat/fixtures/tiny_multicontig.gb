@@ -1,0 +1,141 @@
+LOCUS       TESTSEQ1                 540 bp    cRNA    linear   VRL 11-DEC-2020
+DEFINITION  Human orthopneumovirus Subgroup A, complete cds.
+ACCESSION   TESTSEQ1
+VERSION     TESTSEQ1.1
+DBLINK      BioProject: PRJNA485481
+KEYWORDS    RefSeq.
+SOURCE      human respiratory syncytial virus (HRSV)
+  ORGANISM  human respiratory syncytial virus
+            Viruses; Riboviria; Orthornavirae; Negarnaviricota;
+            Haploviricotina; Monjiviricetes; Mononegavirales; Pneumoviridae;
+            Orthopneumovirus; Orthopneumovirus hominis.
+REFERENCE   1  (bases 1 to 15222)
+  AUTHORS   Mink,M.A., Stec,D.S. and Collins,P.L.
+  TITLE     Nucleotide sequences of the 3' leader and 5' trailer regions of
+            human respiratory syncytial virus genomic RNA
+  JOURNAL   Virology 185 (2), 615-624 (1991)
+   PUBMED   1840712
+REFERENCE   2  (bases 1 to 15222)
+  AUTHORS   Stec,D.S., Hill,M.G. III and Collins,P.L.
+  TITLE     Sequence analysis of the polymerase L gene of human respiratory
+            syncytial virus and predicted phylogeny of nonsegmented
+            negative-strand viruses
+  JOURNAL   Virology 183 (1), 273-287 (1991)
+   PUBMED   2053282
+REFERENCE   3  (bases 1 to 15222)
+  AUTHORS   Collins,P.L., Olmsted,R.A., Spriggs,M.K., Johnson,P.R. and
+            Buckler-White,A.J.
+  TITLE     Gene overlap and site-specific attenuation of transcription of the
+            viral polymerase L gene of human respiratory syncytial virus
+  JOURNAL   Proc. Natl. Acad. Sci. U.S.A. 84 (15), 5134-5138 (1987)
+   PUBMED   2440043
+REFERENCE   4  (bases 1 to 15222)
+  CONSRTM   NCBI Genome Project
+  TITLE     Direct Submission
+  JOURNAL   Submitted (13-AUG-2018) National Center for Biotechnology
+            Information, NIH, Bethesda, MD 20894, USA
+COMMENT     REVIEWED REFSEQ: This record has been curated by NCBI staff. The
+            reference sequence is identical to M74568.
+            COMPLETENESS: full length.
+FEATURES             Location/Qualifiers
+     source          1..540
+     gene            45..576
+                     /gene="NS1"
+                     /locus_tag="DZD21_gp01"
+                     /note="formerly called 1C"
+                     /db_xref="GeneID:37607636"
+     mRNA            45..576
+                     /gene="NS1"
+                     /locus_tag="DZD21_gp01"
+                     /experiment="experimental evidence, no additional details
+                     recorded"
+                     /citation=[3]
+                     /db_xref="GeneID:37607636"
+     CDS             99..518
+                     /gene="NS1"
+                     /locus_tag="DZD21_gp01"
+                     /codon_start=1
+                     /product="nonstructural protein 1"
+                     /protein_id="YP_009518850.1"
+                     /db_xref="GeneID:37607636"
+                     /translation="MGSNSLSMIKVRLQNLFDNDEVALLKITCYTDKLIHLTNALAKA
+                     VIHTIKLNGIVFVHVITSSDICPNNNIVVKSNFTTMPVLQNGGYIWEMMELTHCSQPN
+                     GLLDDNCEIKFSKKLSDSTMTNYMNQLSELLGFDLNP"
+ORIGIN      
+        1 acgcgaaaaa atgcgtacaa caaacttgca taaaccaaaa aaatggggca aataagaatt
+       61 tgataagtac cacttaaatt taactccctt ggttagagat gggcagcaat tcattgagta
+      121 tgataaaagt tagattacaa aatttgtttg acaatgatga agtagcattg ttaaaaataa
+      181 catgctatac tgataaatta atacatttaa ctaacgcttt ggctaaggca gtgatacata
+      241 caatcaaatt gaatggcatt gtgtttgtgc atgttattac aagtagtgat atttgcccta
+      301 ataataatat tgtagtaaaa tccaatttca caacaatgcc agtactacaa aatggaggtt
+      361 atatatggga aatgatggaa ttaacacatt gctctcaacc taatggtcta ctagatgaca
+      421 attgtgaaat taaattctcc aaaaaactaa gtgattcaac aatgaccaat tatatgaatc
+      481 aattatctga attacttgga tttgatctta atccataaat tataattaat atcaactagc
+//
+LOCUS       TESTSEQ2                 540 bp    cRNA    linear   VRL 11-DEC-2020
+DEFINITION  Human orthopneumovirus Subgroup A, complete cds.
+ACCESSION   TESTSEQ2
+VERSION     TESTSEQ2.1
+DBLINK      BioProject: PRJNA485481
+KEYWORDS    RefSeq.
+SOURCE      human respiratory syncytial virus (HRSV)
+  ORGANISM  human respiratory syncytial virus
+            Viruses; Riboviria; Orthornavirae; Negarnaviricota;
+            Haploviricotina; Monjiviricetes; Mononegavirales; Pneumoviridae;
+            Orthopneumovirus; Orthopneumovirus hominis.
+REFERENCE   1  (bases 1 to 15222)
+  AUTHORS   Mink,M.A., Stec,D.S. and Collins,P.L.
+  TITLE     Nucleotide sequences of the 3' leader and 5' trailer regions of
+            human respiratory syncytial virus genomic RNA
+  JOURNAL   Virology 185 (2), 615-624 (1991)
+   PUBMED   1840712
+REFERENCE   2  (bases 1 to 15222)
+  AUTHORS   Stec,D.S., Hill,M.G. III and Collins,P.L.
+  TITLE     Sequence analysis of the polymerase L gene of human respiratory
+            syncytial virus and predicted phylogeny of nonsegmented
+            negative-strand viruses
+  JOURNAL   Virology 183 (1), 273-287 (1991)
+   PUBMED   2053282
+REFERENCE   3  (bases 1 to 15222)
+  AUTHORS   Collins,P.L., Olmsted,R.A., Spriggs,M.K., Johnson,P.R. and
+            Buckler-White,A.J.
+  TITLE     Gene overlap and site-specific attenuation of transcription of the
+            viral polymerase L gene of human respiratory syncytial virus
+  JOURNAL   Proc. Natl. Acad. Sci. U.S.A. 84 (15), 5134-5138 (1987)
+   PUBMED   2440043
+REFERENCE   4  (bases 1 to 15222)
+  CONSRTM   NCBI Genome Project
+  TITLE     Direct Submission
+  JOURNAL   Submitted (13-AUG-2018) National Center for Biotechnology
+            Information, NIH, Bethesda, MD 20894, USA
+COMMENT     REVIEWED REFSEQ: This record has been curated by NCBI staff. The
+            reference sequence is identical to M74568.
+            COMPLETENESS: full length.
+FEATURES             Location/Qualifiers
+     source          1..540
+     mRNA            45..576
+                     /gene="NS1"
+                     /locus_tag="DZD21_gp01"
+                     /experiment="experimental evidence, no additional details
+                     recorded"
+                     /citation=[3]
+                     /db_xref="GeneID:37607636"
+     CDS             99..518
+                     /codon_start=1
+                     /product="nonstructural protein 1"
+                     /protein_id="YP_009518850.1"
+                     /db_xref="GeneID:37607636"
+                     /translation="MGSNSLSMIKVRLQNLFDNDEVALLKITCYTDKLIHLTNALAKA
+                     VIHTIKLNGIVFVHVITSSDICPNNNIVVKSNFTTMPVLQNGGYIWEMMELTHCSQPN
+                     GLLDDNCEIKFSKKLSDSTMTNYMNQLSELLGFDLNP"
+ORIGIN      
+        1 acgcgaaaaa atgcgtacaa caaacttgca taaaccaaaa aaatggggca aataagaatt
+       61 tgataagtac cacttaaatt taactccctt ggttagagat gggcagcaat tcattgagta
+      121 tgataaaagt tagattacaa aatttgtttg acaatgatga agtagcattg ttaaaaataa
+      181 catgctatac tgataaatta atacatttaa ctaacgcttt ggctaaggca gtgatacata
+      241 caatcaaatt gaatggcatt gtgtttgtgc atgttattac aagtagtgat atttgcccta
+      301 ataataatat tgtagtaaaa tccaatttca caacaatgcc agtactacaa aatggaggtt
+      361 atatatggga aatgatggaa ttaacacatt gctctcaacc taatggtcta ctagatgaca
+      421 attgtgaaat taaattctcc aaaaaactaa gtgattcaac aatgaccaat tatatgaatc
+      481 aattatctga attacttgga tttgatctta atccataaat tataattaat atcaactagc
+//

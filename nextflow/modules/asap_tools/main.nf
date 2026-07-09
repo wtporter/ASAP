@@ -1,5 +1,54 @@
 #! /usr/bin/env nextflow
 
+process GENERATE_PRIMER_BED {
+    tag "primer_bed"
+    label 'process_low'
+
+    // Publish the generated BED, the full primer-search results, and the
+    // per-primer match-count summary (matches per primer per reference) to the results dir
+    publishDir "${params.outdir}/primer_bed", mode: 'copy'
+
+    input:
+    path primer_csv
+    path reference_fasta
+
+    output:
+    path "*_primers.bed",               emit: bed
+    path "*_primer_search_results.csv", emit: results
+    path "*_primer_match_summary.csv",  emit: summary
+
+    script:
+    """
+    process_primers_to_bed.R \\
+        ${primer_csv} \\
+        ${reference_fasta} \\
+        ${params.file_name} \\
+        ${params.primer_max_mismatch} \\
+        ${task.cpus}
+    """
+}
+
+process COMBINE_MASKED_READS_PER_PRIMER {
+    tag "masked_reads_per_primer"
+    label 'process_low'
+
+    // Cross-sample WIDE report: one row per (ref, primer, direction), one column per sample.
+    publishDir "${params.outdir}/sample_reports/general_reports", mode: 'copy'
+
+    input:
+    path per_sample_stats
+
+    output:
+    path "${params.file_name}_masked_reads_per_primer.tsv", emit: wide
+
+    script:
+    """
+    combine_masked_reads_wide.R \\
+        ${params.file_name}_masked_reads_per_primer.tsv \\
+        ${per_sample_stats}
+    """
+}
+
 process PROCESS_XML_R {
     tag "$sample_id"
     label 'process_low'
@@ -16,7 +65,7 @@ process PROCESS_XML_R {
 
     script:
     """
-    process_xml.R ${xml} ${proportion} ${sample_id}
+    process_xml.R ${xml} ${proportion} ${sample_id} ${params.file_name}
     """
 }
 
@@ -139,7 +188,7 @@ process PROCESS_GENERATE_SNP_TABLE {
         ${prefix} \\
         ${effective_prop} \\
         ${params.asaptools_max_sample_snp_count} \\
-        ${params.asaptools_min_location_depth} \\
+        ${params.depth} \\
         "${exclude_list}" \\
         ${poi_param} \\
         "${bed_param}" \\
@@ -160,17 +209,76 @@ process PROCESS_QC_PLOTS {
     val  poi_input
 
     output:
-    path "*.html", emit: html
-    path "*.jpg",  emit: jpg
+    path "*.html", emit: html, optional: true
+    path "*.jpg",  emit: jpg,  optional: true
 
     script:
-    def poi_param = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
+    def poi_param      = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
+    def snp_prop_param = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
+    def interactive    = params.asaptools_interactive_plots.toString().toUpperCase()
     """
     process_asaptools_generate_figures.R \\
         ${combined_rdata} \\
         ${prefix} \\
         ${poi_param} \\
-        ${params.asaptools_snp_proportion} \\
-        ${params.asaptools_min_location_depth}
+        ${snp_prop_param} \\
+        ${params.depth} \\
+        ${interactive}
+    """
+}
+
+process PROCESS_SNP_PLOTS {
+    tag "snp_plots"
+
+    publishDir "${params.outdir}/sample_reports/plots", mode: 'copy'
+
+    input:
+    path combined_rdata
+    val  prefix
+    val  poi_input
+    path aa_rdata
+    path "genbank_input/*"
+
+    output:
+    path "*.html", emit: html, optional: true
+    path "*.jpg",  emit: jpg,  optional: true
+
+    script:
+    def poi_param         = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
+    def snp_prop_param    = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
+    def breadth_threshold = params.asaptools_breadth_threshold ?: params.breadth
+    def interactive       = params.asaptools_interactive_plots.toString().toUpperCase()
+    def aa_param          = (aa_rdata && aa_rdata.name != 'null') ? aa_rdata : "NULL"
+    """
+    shopt -s nullglob
+    process_asaptools_snp_figures.R \\
+        ${combined_rdata} \\
+        ${prefix} \\
+        ${poi_param} \\
+        ${snp_prop_param} \\
+        ${params.depth} \\
+        ${breadth_threshold} \\
+        ${interactive} \\
+        ${aa_param} \\
+        genbank_input/*
+    """
+}
+
+process PROCESS_FASTP_PANEL {
+    tag "fastp_panel"
+
+    publishDir "${params.outdir}/sample_reports/plots", mode: 'copy'
+
+    input:
+    path fastp_jsons
+    val  prefix
+
+    output:
+    path "${prefix}_QC_fastp_panel.html", emit: html, optional: true
+    path "${prefix}_QC_fastp_panel.jpg",  emit: jpg,  optional: true
+
+    script:
+    """
+    process_fastp_panel.R ${prefix} ${fastp_jsons}
     """
 }

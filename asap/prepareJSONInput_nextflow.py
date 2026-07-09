@@ -27,33 +27,45 @@ PROFILE = 0
 PRESENCE_ABSENCE = 10
 GENE_VARIANT = 20
 
+def _parse_genbank_origin(gb_file):
+    """Yield (locus_name, sequence) tuples from GenBank records without parsing features."""
+    in_origin = False
+    current_seq = []
+    current_locus = None
+    with open(gb_file) as fh:
+        for line in fh:
+            if line.startswith('LOCUS'):
+                current_locus = line.split()[1]
+            elif line.startswith('ORIGIN'):
+                in_origin = True
+                current_seq = []
+            elif line.startswith('//'):
+                if in_origin and current_seq:
+                    yield current_locus, ''.join(current_seq)
+                in_origin = False
+                current_seq = []
+                current_locus = None
+            elif in_origin:
+                current_seq.append(re.sub(r'[\d\s]', '', line))
+
 def _process_genbank(gb_file):
     """
-    Simplified GenBank parser. 
-    Uses the FILENAME as the assay name and matches FASTA logic for ASAP validation.
+    Simplified GenBank parser.
+    Uses the LOCUS name from each record as the assay name so multi-chromosome
+    genome files produce unique entries. Reads only the ORIGIN sequence section
+    to avoid skbio failures on complex feature location strings (fuzzy joins, etc.)
+    in NCBI full-genome files.
     """
     return_list = []
-    
-    # Extract the filename without the extension to use as the name
     base_name = os.path.splitext(os.path.basename(gb_file))[0]
-    
-    for seq in skbio.io.registry.read(gb_file, format='genbank', constructor=DNA):
-        # 1. Use the filename as the assay name
-        assay_name = base_name
-        
-        # 2. Extract and clean sequence
-        full_seq_str = _clean_seq(str(seq))
-        
-        # 3. Create Amplicon
-        amplicon = assayInfo.Amplicon(sequence=full_seq_str)
-        
-        # 4. Wrap it in a Target and Assay
-        # Using 'species ID' and 'presence/absence' to satisfy ASAP strict validation
+
+    for locus_name, seq_str in _parse_genbank_origin(gb_file):
+        assay_name = f"{base_name}_{locus_name}" if locus_name else base_name
+        amplicon = assayInfo.Amplicon(sequence=_clean_seq(seq_str))
         target = assayInfo.Target(function='species ID', amplicon=amplicon)
         assay = assayInfo.Assay(name=assay_name, assay_type='presence/absence', target=target)
-        
         return_list.append(assay)
-        
+
     return return_list
 
 def _process_fasta(fasta, fasta_type, message=None):
@@ -71,9 +83,10 @@ def _process_fasta(fasta, fasta_type, message=None):
     return return_list
 
 def _process_fasta_single(fasta):
-    for seq in skbio.io.registry.read(fasta, format='fasta', constructor=DNA):
-        amplicon = assayInfo.Amplicon(sequence=_clean_seq(str(seq)))
-    return amplicon
+    seqs = list(skbio.io.registry.read(fasta, format='fasta', constructor=DNA))
+    if len(seqs) != 1:
+        raise ValueError(f"Expected exactly 1 FASTA record in {fasta}, got {len(seqs)}")
+    return assayInfo.Amplicon(sequence=_clean_seq(str(seqs[0])))
 
 def _clean_seq(sequence):
     return_seq = sequence.upper()
@@ -91,7 +104,7 @@ def _strip(string):
 def _isNT(sequence, positions):
     size = 0
     for token in positions.split(','):
-        m = re.search(r"(\d*)-(\d*)", token)
+        m = re.search(r"(\d+)-(\d+)", token)
         if m:
             size += int(m.group(2)) - int(m.group(1)) + 1
         else:
@@ -165,14 +178,7 @@ def main(argv=None):
                     significance = assayInfo.Significance(message=_strip(row[17].value))
 
                 element = None
-                if _strip(row[14].value):  # Significance attaches to a Region of Interest
-                    sequence = _strip(row[15].value)
-                    positions = _strip(row[14].value)
-                    if _isNT(sequence, positions):
-                        element = assayInfo.RegionOfInterest(position_range=positions, nt_sequence=sequence, mutations=_strip(row[16].value), name=_strip(row[13].value), significance=significance)
-                    else:
-                        element = assayInfo.RegionOfInterest(position_range=positions, aa_sequence=sequence, mutations=_strip(row[16].value), name=_strip(row[13].value), significance=significance)
-                elif _strip(row[10].value):  # Significance attaches to a SNP
+                if _strip(row[10].value):  # Significance attaches to a SNP
                     element = assayInfo.SNP(position=_strip(row[10].value), reference=_strip(row[11].value), variant=_strip(row[12].value), name=_strip(row[9].value), significance=significance)
 
                 if _strip(row[8].value):  # New Amplicon sequence on this row
@@ -182,17 +188,17 @@ def main(argv=None):
                         else:
                             amplicon = _process_fasta_single(_strip(row[8].value))
                             if element:
-                                amplicon.add_SNP(element) if isinstance(element, assayInfo.SNP) else amplicon.add_ROI(element)
+                                if isinstance(element, assayInfo.SNP): amplicon.add_SNP(element)
                             else:
                                 amplicon.significance = significance
                     else:
                         amplicon = assayInfo.Amplicon(sequence=_clean_seq(_strip(row[8].value)), variant_name=_clean_str(_strip(row[7].value)))
                         if element:
-                            amplicon.add_SNP(element) if isinstance(element, assayInfo.SNP) else amplicon.add_ROI(element)
+                            if isinstance(element, assayInfo.SNP): amplicon.add_SNP(element)
                         else:
                             amplicon.significance = significance
                 elif amplicon and element:  # Continuing rows: attach another SNP/ROI to the current Amplicon
-                    amplicon.add_SNP(element) if isinstance(element, assayInfo.SNP) else amplicon.add_ROI(element)
+                    if isinstance(element, assayInfo.SNP): amplicon.add_SNP(element)
 
                 if target and _strip(row[8].value):
                     target.add_amplicon(amplicon)

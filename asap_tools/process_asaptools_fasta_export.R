@@ -1,6 +1,8 @@
 #!/usr/bin/env Rscript
 
-library(tidyverse)
+suppressPackageStartupMessages({
+  library(tidyverse)
+})
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) {
@@ -21,6 +23,8 @@ BREADTH_COVERAGE_THRESHOLD <- as.numeric(args[3])*100
 load(RDATA_INPUT)
 
 unique_assays <- unique(final_asap$assay_name)
+
+any_written <- FALSE
 
 for(ASSAY in unique_assays) {
 
@@ -47,4 +51,21 @@ for(ASSAY in unique_assays) {
   writeLines(fasta_lines, file_name)
 
   message(paste("Successfully exported", nrow(Fasta_df), "sequences to", file_name))
+  any_written <- TRUE
+}
+
+if (!any_written) {
+  warning_file <- paste0("./", prefix, "_WARNING_no_sequences_passed_breadth_filter.fasta")
+  writeLines(
+    c(
+      paste0("; WARNING: No sequences were exported."),
+      paste0("; No sample/assay combination exceeded the breadth coverage threshold of ",
+             BREADTH_COVERAGE_THRESHOLD, "% (--breadth ", args[3], ")."),
+      paste0("; Max observed breadth: ", round(max(final_asap$breadth, na.rm = TRUE), 1), "%."),
+      paste0("; Lower --breadth to include more samples (e.g. --breadth 0.5 for 50%).")
+    ),
+    warning_file
+  )
+  warning(paste("No FASTA sequences exported — no samples passed breadth threshold of",
+                BREADTH_COVERAGE_THRESHOLD, "%. See", warning_file))
 }

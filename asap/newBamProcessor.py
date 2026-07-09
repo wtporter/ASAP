@@ -14,26 +14,28 @@ asap.bamProcessor
 @contact:    dlemmer@tgen.org
 '''
 
+
 import sys
 import os
 import re
 import argparse
 import logging
-import math
 
 import pysam
-from collections import Counter
+import statistics
+from collections import Counter, defaultdict
 from xml.etree import ElementTree
-from skbio import DNA
-from skbio.alignment import local_pairwise_align_nucleotide
 
 from asap import assayInfo
 from asap import __version__
+from asap.genbank_cds import _parse_genbank_cds
+from asap.allele_linkage import (
+    _build_fragment_allele_table, _translated_to_amp,
+    _apply_codon_correction, _apply_discover_roi,
+)
 # https://github.com/martinblech/xmltodict
 import json
 import xmltodict
-import numpy as np
-import array as arr
 
 
 __all__ = []
@@ -123,8 +125,8 @@ def _get_n_counts(pileup_iterator, amplicon_length):
                 
                 processed_alignments.add(alignment_id)
 
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"Skipped read in _get_n_counts: {e}")
 
     return n_read_array
 
@@ -150,6 +152,10 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
     # for each position in alignment/pileup
     for pileupcolumn in pileup:
         base_counter = Counter()
+        base_quality_scores = defaultdict(list)
+        base_R1_counter = Counter()
+        base_R2_counter = Counter()
+        base_SE_counter = Counter()
         position = pileupcolumn.pos+1
         # This fills gaps in the alignment with n's or user defined char
         if fill_gap_char != "false":
@@ -167,24 +173,52 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
                 if pileupread.is_del:
                     #This position in the alignment is a deletion in the query sequence, therefore it has no quality score
                     # Let's use the average of the quality scores of the two aligned bases flanking the deletion
-                    qscore = (pileupread.alignment.query_qualities[pileupread.query_position_or_next] +
-                              pileupread.alignment.query_qualities[pileupread.query_position_or_next - 1]) / 2
+                    quals = pileupread.alignment.query_qualities
+                    q_next = pileupread.query_position_or_next
+                    q_prev = q_next - 1
+                    q_next = min(q_next, len(quals) - 1)
+                    q_prev = max(q_prev, 0)
+                    qscore = (quals[q_next] + quals[q_prev]) / 2
                     if qscore >= base_qual:
                         passed_Qual_filter += 1
-                        base_counter.update({"_" : 1})
+                        base_counter.update({"_": 1})
+                        base_quality_scores["_"].append(qscore)
+                        if pileupread.alignment.is_read1:
+                            base_R1_counter.update({"_": 1})
+                        elif pileupread.alignment.is_read2:
+                            base_R2_counter.update({"_": 1})
+                        else:
+                            base_SE_counter.update({"_": 1})
                     else:
                         quality_discard_array[pileupcolumn.pos] += 1
                 elif pileupread.alignment.query_qualities[pileupread.query_position] >= base_qual: # check here
                     passed_Qual_filter += 1
+                    qual_score = pileupread.alignment.query_qualities[pileupread.query_position]
                     if pileupread.indel < 0: #This means the next position is a deletion, we'll process later
                         for d in range(1, abs(pileupread.indel)+1):
                             deletion_counter.update({str(position + d)})
                     if pileupread.indel > 0: #This means the next position is an insertion, unlike with deletions, this we can process now
                         start = pileupread.query_position
                         end = pileupread.query_position + pileupread.indel + 1
-                        base_counter.update({pileupread.alignment.query_sequence[start:end]: 1})
+                        base_key = pileupread.alignment.query_sequence[start:end]
+                        base_counter.update({base_key: 1})
+                        base_quality_scores[base_key].append(qual_score)
+                        if pileupread.alignment.is_read1:
+                            base_R1_counter.update({base_key: 1})
+                        elif pileupread.alignment.is_read2:
+                            base_R2_counter.update({base_key: 1})
+                        else:
+                            base_SE_counter.update({base_key: 1})
                     else:
-                        base_counter.update(pileupread.alignment.query_sequence[pileupread.query_position])
+                        base_key = pileupread.alignment.query_sequence[pileupread.query_position]
+                        base_counter.update(base_key)
+                        base_quality_scores[base_key].append(qual_score)
+                        if pileupread.alignment.is_read1:
+                            base_R1_counter.update({base_key: 1})
+                        elif pileupread.alignment.is_read2:
+                            base_R2_counter.update({base_key: 1})
+                        else:
+                            base_SE_counter.update({base_key: 1})
                 else:
                     quality_discard_array[pileupcolumn.pos] += 1
             except Exception as e:
@@ -269,7 +303,7 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
             translated = position + offset #normal case where gene encompasses the amplicon
         if position in snp_dict:
             for (name, reference, variant, significance) in snp_dict[position]:
-                snp = {'name':name, 'position':str(translated), 'depth':str(column_depth), 'reference':reference, 'variant':variant, 'basecalls':base_counter}
+                snp = {'name':name, 'position':str(translated), 'depth':str(column_depth), 'reference':reference, 'variant':variant, 'basecalls':base_counter, 'base_qualities':base_quality_scores, 'base_R1':base_R1_counter, 'base_R2':base_R2_counter, 'base_SE':base_SE_counter}
                 variant_proportion = base_counter[variant]/column_depth
                 variant_count = base_counter[variant]
                 if variant_proportion >= proportion and variant_count >= mutdepth:
@@ -284,7 +318,7 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
             # We've covered it, now remove it from the dict so we can see what we might have missed
             del snp_dict[position]
         elif depth_passed and snp_call and snp_count >= mutdepth and snp_call_proportion >= proportion:
-            snp = {'name':'unknown', 'position':str(translated), 'depth':str(column_depth), 'reference':reference_call, 'variant':snp_call, 'basecalls':base_counter}
+            snp = {'name':f"{reference_call}{translated}{snp_call}", 'position':str(translated), 'depth':str(column_depth), 'reference':reference_call, 'variant':snp_call, 'basecalls':base_counter, 'base_qualities':base_quality_scores, 'base_R1':base_R1_counter, 'base_R2':base_R2_counter, 'base_SE':base_SE_counter}
             if 0 in snp_dict:
                 (name, *rest, significance) = snp_dict[0][0]
                 snp['name'] = name
@@ -304,8 +338,8 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
         pileup_dict['depths'] = ",".join(str(n) for n in depth_array)
         pileup_dict['proportions'] = ",".join(prop_array)
         pileup_dict['n_reads'] = ",".join(str(n) for n in n_read_array)
+        pileup_dict['quality_discards'] = ",".join(str(n) for n in quality_discard_array)
     pileup_dict['breadth'] = str(breadth_positions/amplicon_length * 100)
-    pileup_dict['quality_discards'] = ",".join(str(n) for n in quality_discard_array)
     pileup_dict['SNPs'] = snp_list
     pileup_dict['average_depth'] = str(avg_depth_total/avg_depth_positions) if avg_depth_positions else "0"
     return pileup_dict
@@ -350,431 +384,85 @@ def _add_snp_node(parent, snp):
             significance_node.set('flag', snp['flag'])
     if base_counter:
         ElementTree.SubElement(snp_node, 'base_distribution', {k:str(v) for k,v in base_counter.items()})
+        base_R1 = snp.get('base_R1')
+        base_R2 = snp.get('base_R2')
+        base_SE = snp.get('base_SE')
+        if base_R1 or base_R2 or base_SE:
+            strand_node = ElementTree.SubElement(snp_node, 'base_strand_distribution')
+            for base in base_counter:
+                attrs = {
+                    'base': base,
+                    'R1':   str(base_R1.get(base, 0) if base_R1 else 0),
+                    'R2':   str(base_R2.get(base, 0) if base_R2 else 0),
+                }
+                if base_SE and base_SE.get(base, 0):
+                    attrs['SE'] = str(base_SE[base])
+                ElementTree.SubElement(strand_node, 'strand', attrs)
+        base_qualities = snp.get('base_qualities')
+        if base_qualities:
+            qual_node = ElementTree.SubElement(snp_node, 'base_quality')
+            for base in base_counter:
+                if base in base_qualities and base_qualities[base]:
+                    q = base_qualities[base]
+                    ElementTree.SubElement(qual_node, 'qual', {
+                        'base':   base,
+                        'mean':   f"{statistics.mean(q):.1f}",
+                        'median': f"{statistics.median(q):.1f}",
+                        'min':    str(min(q)),
+                        'max':    str(max(q)),
+                    })
     return snp_node
 
-def _process_roi(roi, samdata, amplicon_ref, amplicon_ref_len, reverse_comp=False):
-    from operator import attrgetter
-    roi_dict = {'region':roi.position_range}
-    range_list = roi.position_range.split(",")
-    roi_dict['errors'] = {}
-    aa_sequence_counter = Counter()
-    aa_sequence_counter_temp = Counter()
-    nt_sequence_counter = Counter()
-    depth = 0
-    for pos_range in range_list:
-        print("Handling position: ", pos_range)
-        range_match = re.search('(\d*)-(\d*)', pos_range)
-        if not range_match:
-            continue
-        start = int(range_match.group(1)) - 1
-        end = int(range_match.group(2))
-        if end < start:
-            reverse_comp = True
-            start,end = end,start
-        expected_length = end - start
-        #check if the roi spans the whole reference, if so can use .query_alignment_sequence to get the whole sequence without running into the problem of the loop not getting to last base
-        #still will have a problem when start != 0 but end == amplicon_ref_len
-        use_query_alignment_seq = False
-        if end == amplicon_ref_len and start == 0:
-            use_query_alignment_seq = True
-        aligned_reads = sorted(samdata.fetch(amplicon_ref, start, end), key=attrgetter('query_name'))
-        big_reads = []
-        #check if reads are long enough, if not then merge
-        n = failed = 0
-        for read, pair in pairwise(aligned_reads):
-            if read.reference_end == None or read.reference_start == None:
-                continue
-            n += 1
-            if read.reference_end - read.reference_start < (expected_length * 0.9):
-                failed +=1
-        if n == 0:
-            # roi_dict['flag'] = "region not found"
-            print("WARNING::region not found")
-            roi_dict['errors'][pos_range] = "region not found"
-            continue
-            # return roi_dict
-        else: # let's merge
-            proportion_failed = failed/n
-            if proportion_failed >= .95:
-                logging.debug("reads are not as big as roi, merging...")
-                reads = sorted(samdata.fetch(amplicon_ref, start, end), key=attrgetter('query_name'))
-                big_reads = _process_merge(reads, start ,end)
 
-        if not roi.aa_sequence:
-            roi.aa_sequence = str(DNA(roi.nt_sequence).translate()).replace('*', 'x')
-        if big_reads != []: #merged
-            for read in big_reads:
-                nt_sequence = DNA(read)
-                if reverse_comp:
-                    nt_sequence = nt_sequence.reverse_complement()
-                #scikit-bio doesn't support translating degenerate bases currently, so we will just throw out reads with degenerates for now
-                if nt_sequence.has_degenerates():
-                    continue
-                aa_sequence = nt_sequence.translate()
-                aa_string = str(aa_sequence).replace('*', 'x')
-                if aa_string:
-                    nt_sequence_counter.update([str(nt_sequence)])
-                    aa_sequence_counter_temp.update([aa_string])
-                    depth += 1
-        else:
-            aligned_reads = samdata.fetch(amplicon_ref, start, end)
-            for read in aligned_reads:
-                rstart = read.reference_start
-                rend = read.reference_end
-                #alignment_length = read.get_overlap(start, end)
-                #throw out reads that either have gaps in the ROI or don't cover the whole ROI
-                #if alignment_length != expected_length:
-                #    continue
-                #Keep reads with indels, but do throw out reads that don't cover whole ROI
-                if not rend or rstart > start or rend < end:
-                    continue
-                if rstart <= start:
-                    if not use_query_alignment_seq:
-                        qend = qstart = None
-                        for (qpos, rpos) in read.get_aligned_pairs():
-                            if rpos == start:
-                                qstart = qpos
-                            if rpos == end:
-                                qend = qpos
-                        nt_sequence = DNA(read.query_sequence[qstart:qend])
-                    else:
-                        #the ROI is the whole ref so can use .query_alignment_sequence
-                        nt_sequence = DNA(read.query_alignment_sequence)
-                    if reverse_comp:
-                        nt_sequence = nt_sequence.reverse_complement()
-                    #scikit-bio doesn't support translating degenerate bases currently, so we will just throw out reads with degenerates for now
-                    if nt_sequence.has_degenerates():
-                        continue
-                    aa_sequence = nt_sequence.translate()
-                    aa_string = str(aa_sequence).replace('*', 'x')
-                    if aa_string:
-                        nt_sequence_counter.update([str(nt_sequence)])
-                        aa_sequence_counter_temp.update([aa_string])
-                        depth += 1
-        pass #End of loop over ranges
-    #Fill out dictionary
-    if len(aa_sequence_counter_temp) == 0:
-        roi_dict['flag'] = "no regions found"
-        return roi_dict
-    else:
-        for (aa_string, count) in aa_sequence_counter_temp.most_common():
-            num_changes = 0
-            for i in range(len(roi.aa_sequence)):
-                if len(aa_string) <= i or roi.aa_sequence[i] != aa_string[i]:
-                    num_changes += 1
-            aa_sequence_counter[(aa_string, num_changes)] = count
-    #This next bit is just being saved for backward compatibility. Should deprecate and remove soon
-    (aa_consensus, num_changes) = aa_sequence_counter.most_common(1)[0][0]
-    nt_consensus = nt_sequence_counter.most_common(1)[0][0]
-    reference = roi.aa_sequence
-    consensus = aa_consensus
-    if roi.nt_sequence:
-        reference = roi.nt_sequence
-        consensus = nt_consensus
-    roi_dict['most_common_aa_sequence'] = aa_consensus
-    roi_dict['most_common_nt_sequence'] = nt_consensus
-    roi_dict['reference'] = reference
-    roi_dict['changes'] = str(num_changes)
-    #End backward compatibility code
-    roi_dict['aa_sequence_distribution'] = aa_sequence_counter
-    roi_dict['nt_sequence_distribution'] = nt_sequence_counter
-    roi_dict['depth'] = str(depth)
-    return roi_dict
 
-def _add_roi_node(parent, roi, roi_dict, depth, proportion, mutdepth, offset, allele_min_reads):
-    global low_level_cutoff, high_level_cutoff
-    nonsynonymous = False
-    if "flag" in roi_dict:
-        roi_node = _add_dummy_roi_node(parent, roi)
-        significance_node = ElementTree.SubElement(roi_node, "significance", {'flag':roi_dict['flag']})
-        if roi.significance.resistance:
-            significance_node.set("resistance", roi.significance.resistance)
-        return roi_node
-    roi_attributes = {k:roi_dict[k] for k in ('region', 'reference', 'depth')}
-    roi_attributes['name'] = str(roi.name)
-    roi_node = ElementTree.SubElement(parent, "region_of_interest", roi_attributes)
-    if roi_dict["errors"] != {}:
-        for position in roi_dict["errors"].keys():
-            err_node = ElementTree.SubElement(roi_node, "error")
-            err_node.set("position", position)
-            err_node.set("message", roi_dict["errors"][position])
-            pass
-        pass
-    if not roi.aa_sequence:
-        roi.aa_sequence = str(DNA(roi.nt_sequence).translate()).replace('*', 'x')
-    roi_node.set('aa_reference', roi.aa_sequence)
-    reporting_threshold = max(mutdepth, math.ceil(int(roi_dict['depth']) * proportion))
-    #print(proportion, low_level_cutoff, high_level_cutoff, int(roi_dict['depth']), reporting_threshold)
-    cutOff = int(roi_dict['depth']) * .02
-    range_match = re.search('(\d*)-(\d*)', roi.position_range)
-    start = int(range_match.group(1)) - 1
-    end = int(range_match.group(2))
-    if end < start:
-        reverse_comp = True
-        start,end = end,start
-    dominant_count = 0; #Number of reads containing the most common amino acid sequence
-    aa_seq_counter = roi_dict['aa_sequence_distribution']
-    aa_allele_count = 0
-    #calculate offsets depending on if in positive region of gene or negative
-    #adding one when in negative to keep consistent with _process_pileup
-    aa_offset_pos = math.floor(offset/3)
-    aa_offset_neg = math.floor((offset+1)/3)
-    for ((seq, aa_changes), count) in aa_seq_counter.most_common():
-        if dominant_count == 0:
-            dominant_count = count
-        if count >= reporting_threshold:
-            aa_seq_node = ElementTree.SubElement(roi_node, "amino_acid_sequence", {'count':str(count), 'percent':str(count/int(roi_dict['depth'])*100), 'aa_changes':str(aa_changes)})
-            aa_seq_node.text = seq
-            if aa_changes > 0:
-                nonsynonymous = True
-            #get string of the aa changes
-            changes = []
-            all_changes = []
-            for i in range(len(roi.aa_sequence)):
-                if i > len(seq) - 1:
-                    change = [i, roi.aa_sequence[i], "_"]
-                    all_changes.append(change)
-                    changes.append(change)
-                elif roi.aa_sequence[i] != seq[i]:
-                    change = [i, roi.aa_sequence[i], seq[i]]
-                    all_changes.append(change)
-                    changes.append(change)
-            if len(seq) > len(roi.aa_sequence):
-                for i in range(len(roi.aa_sequence), len(seq)):
-                    change = [i, "_", seq[i]]
-                    all_changes.append(change)
-                    changes.append(change)
-            #check to see if aa changes are a result of an indel, and if so remove them
-            start_of_run = _sequential(changes, 0)
-            changes = changes[0:start_of_run]
-            shift = 0
-            #create change string with '1' and '2' that will be replaced by <b><u> and </u></b> in post-processing
-            for change in all_changes:
-                loc = change[0] + shift
-                #check if change is past last base in seq => an indel at the end of seq
-                if loc >= len(seq):
-                    temp = seq + '1' + '_' + '2'
-                else:
-                    temp = seq[0:loc] + '1' + seq[loc] + '2' + seq[loc + 1:]
-                shift += 2
-                seq = temp
-            aa_seq_node.set('underline_seq', seq)
-            #create changes strings, adjusting the aa coordinates to be gene-relative
-            if all_changes != []:
-                change_string = ""
-                for all_change in all_changes:
-                    if all_change[0] >= abs(aa_offset_pos) and aa_offset_pos < 0: #if the offset is negative, ie. amplicon starts before beginning of the gene, then when converting to gene-based coordinates need to make offset 1 unit more positive to account for there being no 0-base in gene-coordinates
-                        all_change[0] = all_change[0] + aa_offset_neg
-                    else:
-                        all_change[0] = all_change[0] + aa_offset_pos #normal case where gene encompasses the amplicon
-                    change_string += ', ' + all_change[1] + str(all_change[0]) + all_change[2]
-                aa_seq_node.set('aa_changes_specific_all', change_string)
-                change_string = ""
-                for change in changes:
-                    #don't need to shift the aa coordinates here again because all_changes and changes are filled with same, shallow copied, lists
-                    if change[0] < 0:
-                        continue
-                    else:
-                        change_string += change[1] + str(change[0]) + change[2] + ', '
-                aa_seq_node.set('aa_changes_specific', change_string)
-        else:
-            break #Since they are returned in order by count, as soon as one is below the threshold the rest will be as well
+def _add_linked_snps_node(snp_node, linked_snps, anchor_name):
+    """Add a <linked_snps> sub-element to a SNP XML node."""
+    ls_node = ElementTree.SubElement(snp_node, 'linked_snps')
+    for entry in linked_snps:
+        link_node = ElementTree.SubElement(ls_node, 'linked_snp', {
+            'anchor_variant': anchor_name,
+            'target_variant': entry['target_name'],
+            'shared_read_depth': str(entry['shared_read_depth']),
+            'co_occurring_count': str(entry['co_count']),
+            'linkage_pct': str(entry['linkage_pct']),
+            'sample_frequency_pct': str(entry['sample_frequency_pct']),
+        })
+        ElementTree.SubElement(link_node, 'read_evidence', {
+            'both_variants': str(entry['both_variants']),
+            'anchor_only': str(entry['anchor_only']),
+            'target_only': str(entry['target_only']),
+            'neither_variant': str(entry['neither_variant']),
+            'masked': str(entry['masked']),
+            'read_too_short': str(entry['read_too_short']),
+        })
 
-    nt_seq_counter = roi_dict['nt_sequence_distribution']
-    skbio_reference = None
-    if roi.nt_sequence:
-        skbio_reference = DNA(roi.nt_sequence)
-    for (seq, count) in nt_seq_counter.most_common():
-        if count >= reporting_threshold:
-            nt_seq_node = ElementTree.SubElement(roi_node, "nucleotide_sequence", {'count':str(count), 'percent':str(count/int(roi_dict['depth'])*100)})
-            nt_seq_node.text = seq
-            if skbio_reference:
-                #align to reference
-                alignment, score, start_end_positions = local_pairwise_align_nucleotide(skbio_reference, DNA(seq))
-                #get string of the nt changes
-                changes = []
-                all_changes = []
-                i=1
-                for aligned_seq_pos in alignment.iter_positions():
-                    if str(aligned_seq_pos[1]) == '-' :
-                        change = [i+start, str(aligned_seq_pos[0]), "_"]
-                        all_changes.append(change)
-                        changes.append(change)
-                        i = i+1
-                    elif str(aligned_seq_pos[0]) == '-':
-                        change = [i+start, "_", str(aligned_seq_pos[1])]
-                        all_changes.append(change)
-                        changes.append(change)
-                        #Don't advance the counter for gaps in the reference
-                    elif aligned_seq_pos[0] != aligned_seq_pos[1]:
-                        change = [i+start, str(aligned_seq_pos[0]), str(aligned_seq_pos[1])]
-                        all_changes.append(change)
-                        changes.append(change)
-                        i = i+1
-                    else:
-                        i = i+1
-                shift = 0
-                #create change string with '1' and '2' that will be replaced by <b><u> and </u></b> in post-processing
-                for change in all_changes:
-                    loc = change[0] - start - 1 + shift
-                    temp = seq
-                    if change[2] == '_':
-                        temp = seq[0:loc] + '1' + '_' + '2' + seq[loc:]
-                    elif change[1] == '_':
-                        #What do we do with insertions
-                        continue
-                    else:
-                        temp = seq[0:loc] + '1' + seq[loc] + '2' + seq[loc + 1:]
-                    shift += 2
-                    seq = temp
-                nt_seq_node.set('underline_seq', seq)
-                #create changes strings, adjusting the nt coordinates to be gene-relative
-                if all_changes != []:
-                    change_string = ""
-                    for all_change in all_changes:
-                        if all_change[0] >= abs(offset) and offset < 0: #if the offset is negative, ie. amplicon starts before beginning of the gene, then when converting to gene-based coordinates need to make offset 1 unit more positive to account for there being no 0-base in gene-coordinates
-                            all_change[0] = all_change[0] + (offset + 1)
-                        else:
-                            all_change[0] = all_change[0] + offset #normal case where gene encompasses the amplicon
-                        change_string += ', ' + all_change[1] + str(all_change[0]) + all_change[2]
-                    nt_seq_node.set('nt_changes_specific_all', change_string)
-                    change_string = ""
-                    for change in changes:
-                        #don't need to shift the nt coordinates here again because all_changes and changes are filled with same, shallow copied, lists
-                        if change[0] < 0:
-                            continue
-                        else:
-                            change_string += change[1] + str(change[0]) + change[2] + ', '
-                    nt_seq_node.set('nt_changes_specific', change_string)
-            else:
-                continue #If we don't have a reference NT sequence, then we can't display the changes
-        else:
-            break #Since they are returned in order by count, as soon as one is below the threshold the rest will be as well
 
-    allele_count = 0
-    for (seq, count) in nt_seq_counter.most_common():
-        #get most frequent alleles that have a freq of > 2% (this is an arbitrary cut-off)
-        if count >= cutOff:
-            allele_node = ElementTree.SubElement(roi_node, "allele_sequence", {'count':str(count), 'percent':str(count/int(roi_dict['depth'])*100),'hash':str(hash(seq))})
-            allele_node.text = seq
-            allele_count += 1
-        else:
-            if allele_count < 2:
-                allele_count += 1
-                allele_node = ElementTree.SubElement(roi_node, "allele_sequence", {'count':str(count), 'percent':str(count/int(roi_dict['depth'])*100),'hash':str(hash(seq))})
-                allele_node.text = seq
-            else:
-                break
-    low_level = True
-    high_level = False
-    significant = False
-    for mutation in roi.mutations:
-        if roi.nt_sequence:
-            count = nt_seq_counter[mutation]
-            mutant_proportion = count/int(roi_dict['depth'])
-        else:
-            count = aa_seq_counter[next((k for k in aa_seq_counter.keys() if k[0] == mutation), None)]
-            mutant_proportion = count/int(roi_dict['depth'])
-        mutation_node = ElementTree.SubElement(roi_node, 'mutation', {'name':str(roi.name)+mutation, 'count':str(count), 'percent':str(mutant_proportion*100)})
-        mutation_node.text = mutation
-        if mutant_proportion >= proportion and count >= mutdepth:
-            significant = True
-            if mutant_proportion > low_level_cutoff:
-                low_level = False
-            if mutant_proportion >= high_level_cutoff:
-                high_level = True
-    if significant:
-        significance_node = ElementTree.SubElement(roi_node, "significance")
-        significance_node.text = roi.significance.message
-        if roi.significance.resistance:
-            significance_node.set("resistance", roi.significance.resistance)
-        if int(roi_dict['depth']) < depth:
-            significance_node.set("flag", "low coverage")
-        if low_level:
-            significance_node.set("level", "low")
-        elif high_level:
-            significance_node.set("level", "high")
-    elif len(roi.mutations) == 0 and dominant_count >= mutdepth and (('changes' in roi_dict and int(roi_dict['changes']) > 0) or nonsynonymous):
-        significance_node = ElementTree.SubElement(roi_node, "significance", {'changes':roi_dict['changes']})
-        significance_node.text = roi.significance.message
-        if roi.significance.resistance:
-            significance_node.set("resistance", roi.significance.resistance)
-        if int(roi_dict['depth']) < depth:# that is so incredibly strange that i am typing that habitualy
-            significance_node.set("flag", "low coverage")
-    elif int(roi_dict['depth']) < depth: # No significance but still need to flag it for low coverage
-        significance_node = ElementTree.SubElement(roi_node, "significance")
-        if roi.significance.resistance:
-            significance_node.set("resistance", roi.significance.resistance)
-        significance_node.set("flag", "low coverage")
-    #keep all alleles until this point so proportional calculations are correct
-    #do not output alleles that have less than allele_min_reads # of reads
-    ElementTree.SubElement(roi_node, 'aa_sequence_distribution', {k[0]:str(v) for k,v in aa_seq_counter.items() if v >= allele_min_reads}) #key is a tuple of (sequence, changes) and I just want the sequence
-    ElementTree.SubElement(roi_node, 'nt_sequence_distribution', {k:str(v) for k,v in nt_seq_counter.items() if v >= allele_min_reads})
-    return roi_node
+def _add_codon_merges_node(snp_node, codon_merges):
+    """Add one <codon_merge> child element per entry in codon_merges."""
+    for entry in codon_merges:
+        cm_node = ElementTree.SubElement(snp_node, 'codon_merge', {
+            'name': entry['name'],
+            'region': entry['region'],
+            'direction': entry['direction'],
+            'position': entry['position'],
+            'codon_depth': str(entry['codon_depth']),
+            'reference': entry['reference'],
+        })
+        ElementTree.SubElement(cm_node, 'codon_call', {
+            'codon_count': str(entry['codon_call_count']),
+            'percentage': f"{entry['codon_call_percentage']:.1f}",
+        }).text = entry['codon_call']
+        dist_attribs = {
+            seq: str(cnt)
+            for seq, cnt in sorted(entry['codon_distribution'].items(),
+                                   key=lambda kv: -kv[1])
+        }
+        ElementTree.SubElement(cm_node, 'codon_distribution', dist_attribs)
+        ElementTree.SubElement(cm_node, 'excluded_reads', {
+            'has_n': str(entry['excl_has_n']),
+            'no_span': str(entry['excl_no_span']),
+        })
 
-#returns the index of the start of a run of sequential numbers from some point in array to the end of array
-#if such a run does not exist it returns the index of last element + 1
-#allows for one element gaps, ie. [1,3,4,5,6] would return 0 but [1,4,5,6] would return 1
-def _sequential(arr, n):
-    if n == len(arr) - 1:
-        return n + 1
-    for i in range(n, len(arr) - 1):
-        if arr[i][0] + 1 != arr[i+1][0] and arr[i][0] + 2 != arr[i+1][0]:
-            return _sequential(arr, i + 1)
-    return n
-
-def _add_dummy_roi_node(parent, roi):
-    reference = roi.aa_sequence
-    if roi.nt_sequence:
-        reference = roi.nt_sequence
-    roi_attributes = {'region':roi.position_range, 'name':str(roi.name), 'reference':reference, 'depth':"0"}
-    roi_node = ElementTree.SubElement(parent, "region_of_interest", roi_attributes)
-    for mutation in roi.mutations:
-        mutation_node = ElementTree.SubElement(roi_node, 'mutation', {'name':str(roi.name)+mutation, 'count':"0", 'percent':"0"})
-        mutation_node.text = mutation
-    return roi_node
-
-def _process_merge(reads, start, end):
-    big_aligned_reads = []
-    for read, pair in pairwise(reads):
-        if read.query_name != pair.query_name:
-            continue
-        refstart1 = read.reference_start
-        refend1 = read.reference_end
-        refstart2 = pair.reference_start
-        refend2 = pair.reference_end
-        if refstart1 == None or refend1 == None or refstart2 == None or refend2 == None:
-            continue
-        #get the farthest left and right positions that either read align to reference
-        refstart = refstart1 if refstart1 < refstart2 else refstart2
-        refend = refend2 if refend2 > refend1 else refend1
-        combined_read = ""
-        for ref_pos in range(refstart, refend):
-            read_base = pair_base = None
-            for (read_qpos, read_rpos) in read.get_aligned_pairs():
-                if read_rpos == ref_pos and read_qpos != None:
-                    read_base = str(DNA(read.query_sequence[int(read_qpos)]))
-                    read_qual = read.query_qualities[int(read_qpos)]
-                    break
-            for (pair_qpos, pair_rpos) in pair.get_aligned_pairs():
-                if pair_rpos == ref_pos and pair_qpos != None:
-                    pair_base = str(DNA(pair.query_sequence[int(pair_qpos)]))
-                    pair_qual = pair.query_qualities[int(pair_qpos)]
-                    break
-            if read_base == None and pair_base == None:
-                combined_read += 'N'
-            elif read_base != None and pair_base == None:
-                combined_read += read_base
-            elif read_base == None and pair_base != None:
-                combined_read += pair_base
-            else:
-                if read_qual >= pair_qual:
-                    combined_read += read_base
-                else:
-                    combined_read += pair_base
-        if len(combined_read) == end-start:
-            big_aligned_reads.append(combined_read)
-    return big_aligned_reads
 
 class CLIError(Exception):
     '''Generic exception to raise and log different fatal errors.'''
@@ -1017,6 +705,14 @@ USAGE
         parser.add_argument("--primer-stats", metavar="FILE", dest="primer_stats", type=argparse.FileType('r'), default=None, help="primer_masking_stats.tsv from MASK_PRIMERS step. [default: none]")
         parser.add_argument("--identity-stats", metavar="FILE", dest="identity_stats", type=argparse.FileType('r'), default=None, help="identity_filter_stats.tsv from IDENTITY_FILTER step. [default: none]")
         parser.add_argument("--smor-stats", metavar="FILE", dest="smor_stats", type=argparse.FileType('r'), default=None, help="smor_stats.tsv from SMOR/SMOR_CORRECTION step. [default: none]")
+        parser.add_argument("--codon-correction", action="store_true", dest="codon_correction", default=False, help="annotate SNP pairs in the same codon with read-level allele-linkage info (<codon_merge>/<combo>) using GenBank CDS annotations. Requires --codon-correction-genbank. [default: False]")
+        parser.add_argument("--codon-correction-genbank", metavar="FILE", dest="codon_correction_genbank", nargs='+', default=None, help="One or more GenBank files for --codon-correction codon boundary derivation. [default: none]")
+        parser.add_argument("--codon-correction-error", dest="codon_correction_error", type=float, default=0.05, help="frequency tolerance (0-1) for 'complete' vs. 'partial' codon_merge linkage classification. [default: 0.05]")
+        parser.add_argument("--codon-correction-min-reads", dest="codon_correction_min_reads", type=int, default=10, help="minimum spanning reads to confirm codon linkage. [default: 10]")
+        parser.add_argument("--discover-roi", action="store_true", dest="discover_roi", default=False, help="add <linked_snps> field to SNP XML nodes showing read-level co-occurring variants. [default: False]")
+        parser.add_argument("--discover-roi-min-perc", dest="discover_roi_min_perc", type=float, default=0.1, help="minimum co-occurrence proportion (0-1) to report a linked SNP. [default: 0.1]")
+        parser.add_argument("--discover-roi-min-reads", dest="discover_roi_min_reads", type=int, default=10, help="minimum co-occurring read count to report a linked SNP. [default: 10]")
+        parser.add_argument("--discover-roi-min-snp-perc", dest="discover_roi_min_snp_perc", type=float, default=0.05, help="minimum variant frequency (0-1) for a SNP to be considered (as anchor or candidate) in discover-roi linkage analysis. [default: 0.05]")
 
         # Process arguments
         args = parser.parse_args()
@@ -1035,6 +731,14 @@ USAGE
         con_prop = args.consensus_proportion
         fill_gap_char = args.gap_char
         fill_del_char = args.del_char
+        codon_correction = args.codon_correction
+        codon_correction_genbank = args.codon_correction_genbank
+        codon_correction_error = args.codon_correction_error
+        codon_correction_min_reads = args.codon_correction_min_reads
+        discover_roi = args.discover_roi
+        discover_roi_min_perc = args.discover_roi_min_perc
+        discover_roi_min_reads = args.discover_roi_min_reads
+        discover_roi_min_snp_perc = args.discover_roi_min_snp_perc
 
         #out_dir = args.odir
         #if not out_dir:
@@ -1081,11 +785,17 @@ USAGE
             sample_dict['name'] = samdata.header.to_dict()['RG'][0]['ID']
         else:
             sample_dict['name'] = os.path.splitext(os.path.basename(bam_fp.name))[0]
-        # Use original pre-filter BAM for mapped_reads (primary alignments only)
+        # Report mapped_reads/unmapped_reads/unassigned_reads from the original,
+        # pre-ASAP-filter BAM only, so all three come from one consistent snapshot
+        # (not mixed with primer-masking/identity-filtering/SMOR collapsing applied
+        # to bam_fp downstream). Amplicon-specific funnel fields (aligned_reads,
+        # amplicon_reads, etc.) still track the filtered BAM separately below.
+        orig_samdata = pysam.AlignmentFile(args.original_bam.name, "rb") if args.original_bam else None
+        count_samdata = orig_samdata or samdata
         bam_for_count = args.original_bam.name if args.original_bam else bam_fp.name
-        sample_dict['mapped_reads'] = _primary_mapped(bam_for_count) or str(samdata.mapped)
-        sample_dict['unmapped_reads'] = str(samdata.unmapped)
-        sample_dict['unassigned_reads'] = str(samdata.nocoordinate)
+        sample_dict['mapped_reads'] = _primary_mapped(bam_for_count) or str(count_samdata.mapped)
+        sample_dict['unmapped_reads'] = str(count_samdata.unmapped)
+        sample_dict['unassigned_reads'] = str(count_samdata.nocoordinate)
         # Add pre-QC and post-QC read counts from fastp/fastplong JSON when available
         if args.fastp_json:
             import json as _json
@@ -1100,9 +810,6 @@ USAGE
         primer_stats  = _load_ref_stats(args.primer_stats)
         identity_stats = _load_ref_stats(args.identity_stats)
         smor_stats    = _load_ref_stats(args.smor_stats)
-
-        # Open original BAM for per-amplicon aligned_reads counts
-        orig_samdata = pysam.AlignmentFile(args.original_bam.name, "rb") if args.original_bam else None
 
         sample_dict['depth_filter'] = str(depth)
         sample_dict['proportion_filter'] = str(proportion)
@@ -1184,6 +891,9 @@ USAGE
                 if ref_name in primer_stats:
                     amplicon_dict['primer_reads']    = primer_stats[ref_name]['primer_reads']
                     amplicon_dict['no_primer_reads'] = primer_stats[ref_name]['no_primer_reads']
+                    # reads actually dropped by primer masking (non-zero only with
+                    # --primer-only); .get() keeps older primer-stats files working
+                    amplicon_dict['primer_removed_reads'] = primer_stats[ref_name].get('removed_reads', '0')
                 if ref_name in identity_stats:
                     amplicon_dict['identity_input']     = identity_stats[ref_name]['input_reads']
                     amplicon_dict['identity_discarded'] = identity_stats[ref_name]['discarded_reads']
@@ -1191,6 +901,7 @@ USAGE
                     amplicon_dict['smor_input']           = smor_stats[ref_name]['input_reads']
                     amplicon_dict['smor_pairs_dropped']   = smor_stats[ref_name]['pairs_dropped']
                     amplicon_dict['smor_consensus_reads'] = smor_stats[ref_name]['consensus_reads']
+                    amplicon_dict['smor_singleton_reads'] = smor_stats[ref_name].get('singleton_reads', '0')
                 amplicon_node = ElementTree.SubElement(assay_node, "amplicon", amplicon_dict)
                 if seq_counter:
                     ElementTree.SubElement(amplicon_node, "sequence_distribution", {k:str(v) for k,v in seq_counter.items()})
@@ -1206,10 +917,6 @@ USAGE
                         _add_snp_node(amplicon_node, dummy_snp)
                         if snp.significance.resistance:
                             resistances.add(snp.significance.resistance)
-                    for roi in amplicon.ROIs:
-                        _add_dummy_roi_node(amplicon_node, roi)
-                        if roi.significance.resistance:
-                            resistances.add(roi.significance.resistance)
                     if resistances:
                         significance_node.set("resistance", ",".join(resistances))
                 else:
@@ -1228,9 +935,6 @@ USAGE
                             for snp in amplicon.SNPs:
                                 if snp.significance.resistance:
                                     resistances.add(snp.significance.resistance)
-                            for roi in amplicon.ROIs:
-                                if roi.significance.resistance:
-                                    resistances.add(roi.significance.resistance)
                             if resistances:
                                 significance_node.set("resistance", ",".join(resistances))
                     # Warning: not designed to handle greater than 10 million X coverage
@@ -1247,21 +951,60 @@ USAGE
                             significance_node = ElementTree.SubElement(amplicon_node, "significance")
                         if not significance_node.get("flag"):
                             significance_node.set("flag", "insufficient breadth of coverage")
+                    # Parse CDS features first so all codon positions can be
+                    # included in the fragment-allele table (the 3rd codon
+                    # position may not be a SNP and would otherwise be absent).
+                    cds_features = []
+                    if codon_correction and codon_correction_genbank:
+                        cds_features = _parse_genbank_cds(codon_correction_genbank, amplicon.sequence)
+                    # Build a fragment-allele table once per amplicon (single BAM
+                    # pass), shared by codon correction and discover-roi to avoid
+                    # re-scanning the BAM for every SNP/codon pair.
+                    pos_table, reach, masked, deleted = {}, {}, {}, {}
+                    if cds_features or discover_roi:
+                        amp_positions = {
+                            _translated_to_amp(int(s['position']), offset)
+                            for s in amplicon_data['SNPs'] if int(s.get('depth', 0)) > 0
+                        }
+                        # Include all 3 positions of every codon so non-SNP
+                        # positions are available for the full-codon tally.
+                        # Only for codons that actually contain a SNP --
+                        # _apply_codon_correction skips any codon without
+                        # exactly 2 SNPs, so codons with none are never used,
+                        # and pulling in every codon of every CDS (i.e. nearly
+                        # the whole genome for densely-coding references)
+                        # blows up the fragment-allele table at high coverage.
+                        snp_amp_positions = frozenset(amp_positions)
+                        for cds in cds_features:
+                            for start, end, _ref in cds.codon_boundaries:
+                                if snp_amp_positions.intersection(range(start, end)):
+                                    amp_positions.update(range(start, end))
+                        if len(amp_positions) >= 2:
+                            pos_table, reach, masked, deleted = _build_fragment_allele_table(samdata, amp_positions, ref_name)
+                    # Apply codon correction (annotate same-codon SNPs via GenBank CDS)
+                    if cds_features:
+                        _apply_codon_correction(
+                            amplicon_data['SNPs'], pos_table, deleted, masked,
+                            cds_features, offset, codon_correction_error, codon_correction_min_reads
+                        )
+                    # Annotate co-occurring SNPs (discover-roi)
+                    if discover_roi:
+                        _apply_discover_roi(
+                            amplicon_data['SNPs'], pos_table, reach, masked, offset,
+                            discover_roi_min_perc, discover_roi_min_reads, discover_roi_min_snp_perc
+                        )
                     # Handle SNPs
                     for snp in amplicon_data['SNPs']:
-                        _add_snp_node(amplicon_node, snp)
-                        # This would be helpful, but count_coverage is broken in python3 -- TODO: Revisit this
-                        # print(samdata.count_coverage(ref_name, snp.position-1, snp.position))
+                        snp_node = _add_snp_node(amplicon_node, snp)
+                        if 'codon_merges' in snp:
+                            _add_codon_merges_node(snp_node, snp['codon_merges'])
+                        if 'linked_snps' in snp:
+                            _add_linked_snps_node(snp_node, snp['linked_snps'], snp['name'])
                     del amplicon_data['SNPs']
                     _write_parameters(amplicon_node, amplicon_data)
                     if not wholegenome:
                         ref_positions_node = ElementTree.SubElement(amplicon_node, "ref_positions")
                         ref_positions_node.text = ",".join(str(n) for n in ref_positions)
-                    # Handle ROIs
-                    for roi in amplicon.ROIs:
-                        roi_dict = _process_roi(roi, samdata, ref_name, len(amplicon.sequence), reverse_comp)
-                        _add_roi_node(amplicon_node, roi, roi_dict, depth, proportion, mutdepth, offset, allele_min_reads)
-
                 if temp_file and REMOVE_TEMP:
                     samdata.close()
                     os.remove(temp_file)
@@ -1373,9 +1116,6 @@ def cast_json_output_types(e):
         e['average_depth'] = float(e['average_depth'])
     if 'snp' in e and not isinstance(e['snp'], list):
         e['snp'] = [e['snp']]
-    if 'region_of_interest' in e and not isinstance(e['region_of_interest'], list):
-        e['region_of_interest'] = [e['region_of_interest']]
-
     ## SNP
     if '@depth' in e:
         e['@depth'] = int(e['@depth'])
@@ -1387,6 +1127,14 @@ def cast_json_output_types(e):
     if 'base_distribution' in e:
         e['base_distribution'] = {k: int(v) for k, v in e['base_distribution'].items()}
 
+    ## CodonMerge
+    if '@spanning_depth' in e:
+        e['@spanning_depth'] = int(e['@spanning_depth'])
+    if 'combo' in e and not isinstance(e['combo'], list):
+        e['combo'] = [e['combo']]
+    if 'codon_merge' in e and not isinstance(e['codon_merge'], list):
+        e['codon_merge'] = [e['codon_merge']]
+
     ## SnpCall
     if '@count' in e:
         e['@count'] = int(e['@count'])
@@ -1394,12 +1142,6 @@ def cast_json_output_types(e):
         e['@percent'] = float(e['@percent'])
     # #text: "T"
 
-    ## RegionOfInterest
-    # TODO: what if {aa,nt}_sequence_distribution is set and None; should it default to an empty array? undefined? none?
-    if e.get('aa_sequence_distribution'):
-        e['aa_sequence_distribution'] = {k: int(v) for k, v in e['aa_sequence_distribution'].items()}
-    if e.get('nt_sequence_distribution'):
-        e['nt_sequence_distribution'] = {k: int(v) for k, v in e['nt_sequence_distribution'].items()}
     if '@changes' in e:
         e['@changes'] = int(e['@changes'])
     if 'mutation' in e and not isinstance(e['mutation'], list):

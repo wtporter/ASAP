@@ -4,8 +4,8 @@
 
     █████╗  ███████╗  █████╗  ██████╗
    ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔══██╗
-   ███████║ ███████╗ ███████║ ██████╔╝       
-   ██╔══██║ ╚════██║ ██╔══██║ ██╔═══╝       
+   ███████║ ███████╗ ███████║ ██████╔╝
+   ██╔══██║ ╚════██║ ██╔══██║ ██╔═══╝
    ██║  ██║ ███████║ ██║  ██║ ██║
    ╚═╝  ╚═╝ ╚══════╝ ╚═╝  ╚═╝ ╚═╝
    ──────────────────────────────────────────────────────────────────────────────────────────
@@ -36,11 +36,15 @@ antimicrobial resistance (AMR) detection and viral whole-genome assembly.
 **Continued Development:**
 
 1. Elimination of conda env creation from module YMLs, replaced by containerized tools and a single Nextflow environment for pipeline execution.
-2. Re-evaluate region of interest functionality. Likely to be replaced by an automated system for complex SNP -> amino acid annotation based on GenBank CDS and seperate development for a linked SNP process that creates a list of linked SNPs based on co-occurrence in reads, with the option to report linked SNPs in the final SNP table.
-3. Expanded figure generation and QC reporting.
-4. Automated bed file creation for primer masking based on primers, allowing reference search and bed file creation.
-5. Expansion of test datasets and tutorials for user education and reference.
-6. Consider centralization of reports into single HTML report.
+2. Expansion of tutorials for user education and reference.
+3. Consider centralization of reports into single HTML report.
+4. Update for modern Nextflow requirements.
+
+----
+
+.. contents:: Table of Contents
+   :depth: 2
+   :backlinks: none
 
 ----
 
@@ -66,9 +70,10 @@ single-nucleotide polymorphism (SNP) tables, and intra-host single-nucleotide va
 - Supports Illumina short reads (paired-end and single-end), Oxford Nanopore, and PacBio
 - Multi-reference analysis: multiple amplicons or species analyzed in a single run
 - Primer masking, percent-identity filtering, and SMOR error correction for high-resolution variant calling
+- Supports SNP analysis including automatic SNP to amino acid conversions, presence-true absence detection, codon-aware SNP linkage, and read-based phasing
+- Various automatic plots and reports for quick reference and visualization of data.
+- Stored Rdata files for custom data visualizations.
 - Optional iVAR integration for primer trimming, variant calling, and consensus generation
-- R-based post-processing (ASAP Tools) for SNP tables, coverage tables, QC figures, and FASTA export
-- Full QC reporting via FastQC and MultiQC
 - HPC-ready via SLURM with exponential retry and configurable resource scaling
 
 ----
@@ -86,7 +91,7 @@ Pipeline Summary
    Read Files (FASTQ) ──────────────────────────────────────────┤
              │                                                  │
              ▼                                                  │
-   FastQC (initial QC)                                          │
+   [Optional] FastQC (initial QC)                               │
              │                                                  │
              ▼                                                  │
    ┌─────────────────────────┐                                  │
@@ -94,7 +99,7 @@ Pipeline Summary
    │ ONT/PacBio: fastplong   │                                  │
    └─────────────────────────┘                                  │
              │                                                  │
-   FastQC (post-trim QC)                                        │
+   [Optional] FastQC (post-trim QC)                             │
              │                                                  │
              ▼                                                  ▼
    ┌──────────────────────────────────────────────────────────────┐
@@ -104,7 +109,7 @@ Pipeline Summary
    └──────────────────────────────────────────────────────────────┘
              │
              ▼
-   [Optional] Primer Masking        ← maskPrimers.py + BED file
+   [Optional] Primer Masking        ← maskPrimers.py + BED (or primer CSV → GENERATE_PRIMER_BED)
              │
    [Optional] Percent-Identity Filtering  ← identityFilter.py
              │
@@ -131,156 +136,45 @@ Pipeline Summary
    [Optional] OUTPUT_COMBINER + FORMAT_OUTPUT
              │  (combined XML → HTML report)
              ▼
-   MultiQC (aggregated QC report)
-
-----
-
-Requirements
-============
-
-- **Nextflow** 25.10.4 — provided via ``ASAP_nextflow_env.yml``
-- **nf-schema** plugin 2.5.1 — loaded automatically via ``nextflow.config`` on first run
-- **nf-test** 0.9.5 — provided via ``ASAP_nextflow_env.yml``; required only to run the test suite
-- **Singularity / Apptainer** (for containerized alignment and QC tools)
-- **Conda / Mamba** (environments are built automatically from module YMLs — no manual setup required)
-- A reference file in FASTA, GenBank, Excel (.xlsx), or JSON format
-
-**Execution profiles:**
-
-+---------------+---------------------+---------------------+-----------------------------------+
-| Profile       | Executor            | Containers          | Best For                          |
-+===============+=====================+=====================+===================================+
-| ``slurm``     | SLURM (child jobs)  | Singularity + Conda | Production HPC runs               |
-+---------------+---------------------+---------------------+-----------------------------------+
-| ``conda``     | Local (current node)| Conda               | Interactive ``srun`` or laptop    |
-+---------------+---------------------+---------------------+-----------------------------------+
-
-**Key tool versions:**
-
-+---------------+----------+--------------------------------------------------+
-| Tool          | Version  | Purpose                                          |
-+===============+==========+==================================================+
-| fastp         | 0.23.4   | Illumina read QC and adapter trimming            |
-+---------------+----------+--------------------------------------------------+
-| fastplong     | 0.4.1    | ONT / PacBio read QC                            |
-+---------------+----------+--------------------------------------------------+
-| Bowtie2       | 2.x      | Short-read alignment                             |
-+---------------+----------+--------------------------------------------------+
-| BWA-MEM       | 0.7.x    | Short-read alignment (alternative)               |
-+---------------+----------+--------------------------------------------------+
-| minimap2      | 2.x      | Long-read alignment                              |
-+---------------+----------+--------------------------------------------------+
-| SAMtools      | 1.x      | BAM manipulation and indexing                    |
-+---------------+----------+--------------------------------------------------+
-| iVAR          | 1.4.4    | Primer trimming, variant calling, consensus      |
-+---------------+----------+--------------------------------------------------+
-| FastQC        | 0.12.1   | Per-sample read QC                               |
-+---------------+----------+--------------------------------------------------+
-| MultiQC       | latest   | Aggregated QC reporting                          |
-+---------------+----------+--------------------------------------------------+
-
-----
-
-Installation
-============
-
-.. code-block:: bash
-
-   # Clone the repository
-   git clone https://github.com/wtporter/ASAP.git
-   cd ASAP
-
-   # Create the Nextflow environment from the provided YAML (includes Nextflow 25.10.4 and nf-test 0.9.5)
-   conda env create -f ASAP_nextflow_env.yml
-
-   # Activate the environment
-   conda activate ASAP_nextflow_env
-
-   cd nextflow
-
-   # Verify Nextflow is available
-   nextflow -version
-
-   # View full parameter help
-   nextflow run main.nf --help
-
-The ``ASAP_nextflow_env.yml`` file at the repository root creates a conda environment
-named ``ASAP_nextflow_env`` containing Nextflow 25.10.4 and nf-test 0.9.5 (required
-only for running the test suite). The **nf-schema** plugin (``nf-schema@2.5.1``) is
-declared in ``nextflow.config`` and downloaded automatically on first run. Singularity
-containers and all Conda environments for pipeline steps are also resolved automatically
-— no further manual setup is required.
-
-----
-
-Quick Start
-===========
-
-**Illumina paired-end reads with a GenBank reference (SLURM):**
-
-.. code-block:: bash
-
-   cd /path/to/ASAP/nextflow
-
-   nextflow run main.nf \
-     --read_dir        ./reads/ \
-     --reference_input "./refs/*.gb" \
-     --outdir          ASAP_Results \
-     --file_name       MyRun \
-     -profile slurm
-
-**ONT long reads with minimap2:**
-
-.. code-block:: bash
-
-   nextflow run main.nf \
-     --read_dir        ./ont_reads/ \
-     --reference_input reference.gb \
-     --outdir          ONT_Results \
-     --file_name       ONT_Run \
-     --technology      ont \
-     -profile slurm
-
-**JSON reference passed directly (no conversion):**
-
-.. code-block:: bash
-
-   nextflow run main.nf \
-     --read_dir        ./reads/ \
-     --reference_input assay.json \
-     --outdir          Results \
-     --file_name       MyRun \
-     -profile slurm
-
-**Resume a failed or interrupted run:**
-
-.. code-block:: bash
-
-   nextflow run main.nf [params] -resume
+   [Optional] MultiQC (aggregated QC report)   ← skipped by default
 
 ----
 
 Reference Input Formats
 =======================
 
+ASAP is designed to analyze multiple amplicon targets simultaneously in a single run.
+This supports:
+
+- **Species co-analysis** — e.g., RSV-A and RSV-B from the same sequencing run
+- **Multi-gene AMR panels** — multiple resistance genes across *M. tuberculosis*
+- **Cross-contamination QC** — include neighboring-species references to detect and quantify cross-contamination between samples
+
+Multi-reference analysis can be enabled by:
+
+- Providing multiple sequences in a multi-FASTA or JSON reference file
+- Specifying multiple GenBank files (``"./refs/*.gb"``)
+- Using the ASAP Excel template with multiple amplicon rows
+- Subsetting output annotation to specific positions via ``--asaptools_positions_of_interest``
+
 ASAP accepts four reference formats via ``--reference_input``:
 
-+----------+---------------------+----------------+------------------+---------------------------------------------+
-| Format   | Extension(s)        | Files accepted | AA annotation    | Notes                                       |
-+==========+=====================+================+==================+=============================================+
-| GenBank  | ``.gb``, ``.gbk``   | 1 or more      | Yes (CDS-based)  | **Recommended** — full features, standard   |
-+----------+---------------------+----------------+------------------+---------------------------------------------+
-| JSON     | ``.json``           | 1              | Yes (full)       | Native format; custom significance rules    |
-+----------+---------------------+----------------+------------------+---------------------------------------------+
-| FASTA    | ``.fasta``, ``.fa`` | 1              | No               | Presence/absence only; quick runs           |
-+----------+---------------------+----------------+------------------+---------------------------------------------+
-| Excel    | ``.xlsx``, ``.xls`` | 1              | No               | Spreadsheet-based panel entry               |
-+----------+---------------------+----------------+------------------+---------------------------------------------+
++---------+----------------------------------------------------------------+----------------+-----------------+-------------------------------------------+
+| Format  | Extension(s)                                                   | Files accepted | AA annotation   | Notes                                     |
++=========+================================================================+================+=================+===========================================+
+| GenBank | ``.gb``, ``.gbk``, ``.gbf``, ``.gbb``, ``.gbff``, ``.genbank`` | 1 or more      | Yes (CDS-based) | **Recommended** — full features, standard |
++---------+----------------------------------------------------------------+----------------+-----------------+-------------------------------------------+
+| JSON    | ``.json``                                                      | 1              | Yes (full)      | Native format; custom significance rules  |
++---------+----------------------------------------------------------------+----------------+-----------------+-------------------------------------------+
+| FASTA   | ``.fasta``, ``.fa``                                            | 1              | No              | Presence/absence only; quick runs         |
++---------+----------------------------------------------------------------+----------------+-----------------+-------------------------------------------+
+| Excel   | ``.xlsx``, ``.xls``                                            | 1              | No              | Spreadsheet-based panel entry             |
++---------+----------------------------------------------------------------+----------------+-----------------+-------------------------------------------+
 
 All non-JSON formats are converted to an internal JSON assay description by
 ``prepareJSONInput_nextflow.py`` before processing.
 
-**GenBank** (``.gb``, ``.gbk``) — *Recommended*
+**GenBank** (``.gb``, ``.gbk``, ``.gbf``, ``.gbb``, ``.gbff``, ``.genbank``) — *Recommended*
     The most feature-complete starting point for most users. One or more GenBank
     files are accepted via glob: ``"./refs/*.gb"``. Each file becomes a separate
     assay named by its filename. CDS feature annotations drive amino acid translation
@@ -319,18 +213,22 @@ quality filtering, and per-sample HTML/JSON reports.
 **ONT and PacBio reads** are processed by ``fastplong`` [CITATION]_, a long-read
 variant of fastp.
 
-``FastQC`` [CITATION]_ runs on reads before and after trimming for per-sample QC
-assessment.
+``FastQC`` [CITATION]_ can run on reads before and after trimming for per-sample QC
+assessment, but is **skipped by default** (``--skip_fastqc true``). Pass
+``--skip_fastqc false`` to enable both the initial and post-trim FastQC runs
+(see `Step 9`_).
 
-+----------------------+-------------+----------------------------------------------------------+
-| Parameter            | Default     | Description                                              |
-+======================+=============+==========================================================+
-| ``--technology``     | ``illumina``| Platform: ``illumina``, ``ont``, ``pacbio``              |
-+----------------------+-------------+----------------------------------------------------------+
-| ``--adapter_fasta``  | bundled     | Adapter FASTA; bundled Illumina adapters used by default |
-+----------------------+-------------+----------------------------------------------------------+
-| ``--fastp_extra_args``| ``""``     | Additional fastp flags (e.g. ``-l 100`` for min length)  |
-+----------------------+-------------+----------------------------------------------------------+
++------------------------+--------------+----------------------------------------------------------+
+| Parameter              | Default      | Description                                              |
++========================+==============+==========================================================+
+| ``--technology``       | ``illumina`` | Platform: ``illumina``, ``ont``, ``pacbio``              |
++------------------------+--------------+----------------------------------------------------------+
+| ``--adapter_fasta``    | bundled      | Adapter FASTA; bundled Illumina adapters used by default |
++------------------------+--------------+----------------------------------------------------------+
+| ``--fastp_extra_args`` | ``""``       | Additional fastp flags (e.g. ``-l 100`` for min length)  |
++------------------------+--------------+----------------------------------------------------------+
+| ``--skip_fastqc``      | ``true``     | Skip both FastQC runs; set ``false`` to enable FastQC    |
++------------------------+--------------+----------------------------------------------------------+
 
 Step 2 — Alignment
 -------------------
@@ -344,63 +242,118 @@ All aligners produce a coordinate-sorted, indexed BAM published to
 ``sample_info/<sample>/bwa/``, ``bowtie2/``, or ``minimap2/`` respectively.
 BWA and Bowtie2 also emit ``flagstat`` files for MultiQC.
 
-+------------------------+------------+-------------------------------------------+
-| Parameter              | Default    | Description                               |
-+========================+============+===========================================+
-| ``--aligner``          | ``bowtie2``| Aligner: ``bowtie2``, ``bwa``,``minimap2``|
-+------------------------+------------+-------------------------------------------+
-| ``--aligner_extra_args``| ``""``    | Additional arguments passed to the aligner|
-+------------------------+------------+-------------------------------------------+
-| ``--filter_secondary_alignments`` | ``true`` | Drop secondary/supplementary alignment records (``samtools view -F 0x900``) immediately after alignment, so downstream read counts (``mapped_reads``, ``amplicon_reads``, ``aligned_reads``, depth/breadth) stay consistent. Set to ``false`` to retain all alignment records emitted by the aligner. |
-+------------------------+------------+-------------------------------------------+
++-----------------------------------+-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Parameter                         | Default     | Description                                                                                                                                                                                                                                                                                           |
++===================================+=============+=======================================================================================================================================================================================================================================================================================================+
+| ``--aligner``                     | ``bowtie2`` | Aligner: ``bowtie2``, ``bwa``,``minimap2``                                                                                                                                                                                                                                                            |
++-----------------------------------+-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``--aligner_extra_args``          | ``""``      | Additional arguments passed to the aligner                                                                                                                                                                                                                                                            |
++-----------------------------------+-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``--filter_secondary_alignments`` | ``true``    | Drop secondary/supplementary alignment records (``samtools view -F 0x900``) immediately after alignment, so downstream read counts (``mapped_reads``, ``amplicon_reads``, ``aligned_reads``, depth/breadth) stay consistent. Set to ``false`` to retain all alignment records emitted by the aligner. |
++-----------------------------------+-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 
 Step 3 — Primer Masking *(optional)*
 --------------------------------------
 
-Primer-derived base calls are masked in aligned reads to prevent them from inflating
-or distorting SNP frequencies or consensus sequences. A BED-format TSV file specifying
-primer coordinates is required.
+*When to use:* amplicon assays where primers are included in the sequenced region.
+Masking prevents primer-derived base calls from inflating or distorting SNP frequencies
+or consensus sequences.
+
+Primer-derived base calls are masked in aligned reads. A BED-format TSV file specifying
+primer coordinates is required — but ``--primer_file`` also accepts a **primer CSV**
+(see `Generating a primer BED from a CSV`_), in which case ASAP locates the primers
+against the reference and builds the BED for you.
 
 For each read, if the alignment start (R1) or end (R2) falls within ``--wiggle`` bases
 of a primer boundary, the primer region is masked: base quality scores are set to 0
 and (by default) bases are replaced with ``N``. A per-amplicon log file tallies reads
 with and without detected primer sequences, confirming correct masking.
 
-+---------------------+---------+-------------------------------------------------------+
-| Parameter           | Default | Description                                           |
-+=====================+=========+=======================================================+
-| ``--primer_file``   | ``null``| Path to primer BED file (required to enable masking)  |
-+---------------------+---------+-------------------------------------------------------+
-| ``--mask_primers``  | ``null``| Enable primer masking (auto-enabled when              |
-|                     |         | ``--primer_file`` is provided; set ``false`` to force |
-|                     |         | disable)                                              |
-+---------------------+---------+-------------------------------------------------------+
-| ``--wiggle``        | ``9``   | Bases outside primer boundary to include in mask      |
-+---------------------+---------+-------------------------------------------------------+
-| ``--mask_bam``      | ``true``| Replace masked bases with ``N`` in BAM sequence field |
-+---------------------+---------+-------------------------------------------------------+
-| ``--primer_only``   | ``false``| Retain only primer-overlapping reads; discard all    |
-|                     |         | others after masking                                  |
-+---------------------+---------+-------------------------------------------------------+
+Masking also reports the **number of masked reads per primer per reference**: a
+per-sample table ``<sample>_masked_reads_per_primer.tsv`` (under
+``sample_info/<sample>/mask_primers/``) and a combined
+``<name>_masked_reads_per_primer.tsv`` across all samples (under
+``sample_reports/general_reports/``), each with columns ``sample_id, ref_name,
+primer_name, direction, masked_reads``. Primers that masked zero reads are included.
+
++--------------------------+-----------+-------------------------------------------------------+
+| Parameter                | Default   | Description                                           |
++==========================+===========+=======================================================+
+| ``--primer_file``        | ``null``  | Path to a primer BED **or** a primer CSV (required to |
+|                          |           | enable masking). A ``.csv`` is auto-detected and      |
+|                          |           | converted to a BED (see below).                       |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--primer_max_mismatch``| ``2``     | CSV→BED only: max mismatches allowed when locating    |
+|                          |           | each primer in the reference (ambiguity codes count   |
+|                          |           | as mismatches)                                        |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--mask_primers``       | ``null``  | Enable primer masking (auto-enabled when              |
+|                          |           | ``--primer_file`` is provided; set ``false`` to force |
+|                          |           | disable)                                              |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--wiggle``             | ``9``     | Bases outside primer boundary to include in mask      |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--mask_bam``           | ``true``  | Replace masked bases with ``N`` in BAM sequence field |
++--------------------------+-----------+-------------------------------------------------------+
+| ``--primer_only``        | ``false`` | Retain only primer-overlapping reads; discard all     |
+|                          |           | others after masking                                  |
++--------------------------+-----------+-------------------------------------------------------+
+
+.. _Generating a primer BED from a CSV:
+
+**Generating a primer BED from a CSV**
+
+If you only have primer sequences (not coordinates), pass a CSV to ``--primer_file``
+with a ``.csv`` extension and three columns: ``primer_name``, ``direction``
+(``F``/``R``), and ``sequence``. Before masking, ASAP runs ``GENERATE_PRIMER_BED``,
+which searches the pipeline reference (both strands, allowing
+``--primer_max_mismatch`` mismatches/indels) for each primer and writes a
+pipeline-ready 6-column BED. Three files are published to ``<outdir>/primer_bed/``:
+
+- ``<name>_primers.bed`` — the generated 6-column primer BED.
+- ``<name>_primer_search_results.csv`` — the full search table (found and not-found
+  primers, both orientations, with per-match mismatch details for QC).
+- ``<name>_primer_match_summary.csv`` — one row per primer with the **number of
+  matches per reference sequence** (one column per reference) and a
+  ``total_matches`` column; primers that matched nothing show an all-zero row.
+
+The same generated BED is reused by primer masking, iVar trimming, and the SNP table.
+A ready-made BED (any non-``.csv`` file) is used directly, unchanged.
 
 Step 4 — Percent-Identity Filtering *(optional)*
 -------------------------------------------------
 
+*When to use:* when near-neighbor organisms co-amplify with the target and off-target
+reads must be excluded before variant calling.
+
 Read-level filtering removes reads that do not meet a minimum percent identity to their
 aligned reference amplicon. Identity is computed via local Smith-Waterman alignment.
+This is especially valuable for:
 
-This is particularly valuable when near-neighbor organisms co-amplify with the target
-and reads from the off-target organism must be excluded before variant calling (e.g.,
-distinguishing *M. tuberculosis* from non-tuberculous mycobacteria).
+- **Near-neighbor co-infections** — e.g., distinguishing *M. tuberculosis* from
+  non-tuberculous mycobacteria when primers amplify both.
+- **Resistance gene specificity** — ensuring only reads from the precise target gene
+  are used for resistance calling, preventing false calls from paralogs or related genes.
 
-+------------------+---------+---------------------------------------------------------------+
-| Parameter        | Default | Description                                                   |
-+==================+=========+===============================================================+
-| ``--identity``   | ``null``| Minimum fractional identity threshold (e.g. ``0.97`` = 97%)  |
-+------------------+---------+---------------------------------------------------------------+
++--------------------+----------+-------------------------------------------------------------+
+| Parameter          | Default  | Description                                                 |
++====================+==========+=============================================================+
+| ``--identity``     | ``null`` | Minimum fractional identity threshold (e.g. ``0.97`` = 97%) |
++--------------------+----------+-------------------------------------------------------------+
+| ``--filter_pairs`` | ``true`` | If either mate of a read pair fails the identity check on a |
+|                    |          | checked reference, discard both mates. Set to ``false`` to  |
+|                    |          | filter each mate independently.                             |
++--------------------+----------+-------------------------------------------------------------+
 
 Step 5 — SMOR Processing *(optional)*
 --------------------------------------
+
+*When to use:* high-resolution applications where sequencing noise would otherwise
+obscure true low-frequency variants —
+
+- High-resolution AMR profiling in heteroresistant *M. tuberculosis* infections
+- Detection of low-frequency viral variants in mixed infections
+- Distinguishing true iSNVs from sequencing artifacts at low allele frequencies
 
 Two complementary approaches leverage paired-end read overlap for Illumina error
 correction, without requiring additional wet-lab steps.
@@ -421,13 +374,18 @@ default). When reads agree, quality scores are combined to produce higher-confid
 calls. This approach is advantageous when reads partially overlap and quality degrades
 toward the ends of R1 or R2.
 
-+------------------------+---------+------------------------------------------+
-| Parameter              | Default | Description                              |
-+========================+=========+==========================================+
-| ``--smor``             | ``false``| SMOR masking (full-overlap assays)      |
-+------------------------+---------+------------------------------------------+
-| ``--smor_correction``  | ``false``| SMOR correction (partial-overlap assays)|
-+------------------------+---------+------------------------------------------+
++----------------------------+-----------+--------------------------------------------------------+
+| Parameter                  | Default   | Description                                            |
++============================+===========+========================================================+
+| ``--smor``                 | ``false`` | SMOR masking (full-overlap assays)                     |
++----------------------------+-----------+--------------------------------------------------------+
+| ``--smor_correction``      | ``false`` | SMOR correction (partial-overlap assays)               |
++----------------------------+-----------+--------------------------------------------------------+
+| ``--qual_diff_threshold``  | ``10``    | Phred quality difference required between R1/R2        |
+|                            |           | bases at a mismatch for the higher-quality base to     |
+|                            |           | be selected during SMOR correction; otherwise the      |
+|                            |           | position is masked with ``--fill_character``           |
++----------------------------+-----------+--------------------------------------------------------+
 
 Step 6 — ASAP BAM Processing
 ------------------------------
@@ -438,40 +396,112 @@ The core analysis step. ``newBamProcessor.py`` reads the assay JSON and the alig
 - Aligned read counts per amplicon
 - Per-position depth, breadth of coverage, and consensus sequence
 - SNPs / iSNVs detected above the proportion and depth thresholds, with per-base distributions
-- Regions of interest (ROI) sequences with DNA and amino acid translations
-- Significance calls based on rules defined in the assay JSON
+- Per-SNP QC data: a strand/mate distribution (per-base R1-vs-R2 read counts, plus an
+  SE count for single-end reads) and per-base quality metrics (mean, median, min, max),
+  supporting the strand-bias and base-quality plots in `Step 8`_
+- Significance calls based on rules defined in the assay JSON (if provided)
+- Optional codon-aware SNP linkage (``<codon_merge>``) and read-based phasing of
+  linked SNPs (``<linked_snps>``)
 
-+--------------------------+----------+----------------------------------------------------------+
-| Parameter                | Default  | Description                                              |
-+==========================+==========+==========================================================+
-| ``--depth``              | ``100``  | Minimum read depth to consider a position covered        |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--breadth``            | ``0.8``  | Minimum breadth of coverage to call an amplicon present  |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--proportion``         | ``0.1``  | Minimum allele frequency to call a SNP / iSNV            |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--mutation_depth``     | ``5``    | Minimum read count to call a SNP / iSNV                  |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--min_base_qual``      | ``5``    | Minimum Phred base quality score                         |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--consensus_proportion``| ``0.8`` | Minimum frequency to call a consensus base (else ``N``)  |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--fill_character``     | ``N``    | Character written at masked / gap positions (used by     |
-|                          |          | SMOR masking and bam_processor)                          |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--fill_gaps``          | ``n``    | Character written at zero-coverage positions in          |
-|                          |          | consensus sequence                                       |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--mark_deletions``     | ``_``    | Character written at deletion positions in consensus     |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--whole_genome``       | ``false``| Skip per-sample consensus/depth arrays (WGS references)  |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--asap_snps``          | ``true`` | Enable ASAP BAM processing (set ``false`` to skip)       |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--combine_output``     | ``true`` | Combine per-sample XMLs and generate HTML report         |
-+--------------------------+----------+----------------------------------------------------------+
-| ``--stylesheet``         | bundled  | XSLT stylesheet for HTML report generation               |
-+--------------------------+----------+----------------------------------------------------------+
++----------------------------------+----------+------------------------------------------------------------+
+| Parameter                        | Default  | Description                                                |
++==================================+==========+============================================================+
+| ``--depth``                      | ``100``  | Minimum read depth to consider a position covered          |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--breadth``                    | ``0.8``  | Minimum breadth of coverage to call an amplicon present    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--proportion``                 | ``0.1``  | Minimum allele frequency to call a SNP / iSNV              |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--mutation_depth``             | ``5``    | Minimum read count to call a SNP / iSNV                    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--min_base_qual``              | ``5``    | Minimum Phred base quality score                           |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--consensus_proportion``       | ``0.8``  | Minimum frequency to call a consensus base (else ``N``)    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--fill_character``             | ``N``    | Character written at masked / gap positions (used by SMOR  |
+|                                  |          | masking and bam_processor)                                 |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--fill_gaps``                  | ``n``    | Character written at zero-coverage positions in consensus  |
+|                                  |          | sequence                                                   |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--mark_deletions``             | ``_``    | Character written at deletion positions in consensus       |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--whole_genome``               | ``false``| Skip per-sample consensus/depth arrays (WGS references)    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--asap_snps``                  | ``true`` | Enable ASAP BAM processing (set ``false`` to skip)         |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--combine_output``             | ``true`` | Combine per-sample XMLs and generate HTML report           |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--stylesheet``                 | bundled  | XSLT stylesheet for HTML report generation                 |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--codon_correction``           | ``false``| Annotate same-codon SNP pairs with read-level allele-      |
+|                                  |          | linkage info (``<codon_merge>``)                           |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--codon_correction_error``     | ``0.05`` | Frequency tolerance (0–1) for 'complete' vs. 'partial'     |
+|                                  |          | codon-merge linkage                                        |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--codon_correction_min_reads`` | ``10``   | Minimum spanning reads to confirm codon-level SNP linkage  |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--discover_roi``               | ``false``| Read-based phasing: annotate each SNP with                 |
+|                                  |          | other variants phased onto the same reads                  |
+|                                  |          | (``<linked_snps>``)                                        |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--discover_roi_min_perc``      | ``0.1``  | Minimum co-occurrence proportion (0–1) to report a linked  |
+|                                  |          | SNP                                                        |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--discover_roi_min_reads``     | ``10``   | Minimum co-occurring read count to report a linked SNP     |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--discover_roi_min_snp_perc``  | ``0.05`` | Minimum variant frequency (0–1) for a SNP to be considered |
+|                                  |          | in discover-roi linkage analysis                           |
++----------------------------------+----------+------------------------------------------------------------+
+
+**SNP Call Quality Control**
+
+Every SNP is emitted with two per-base QC annotations that help distinguish true variants
+from sequencing or library artifacts:
+
+- **Base quality** (``<base_quality>``) — for each observed base, the mean, median, min,
+  and max Phred quality of the supporting reads. A variant supported only by low-quality
+  bases (especially relative to the reference base at the same position) is a likely
+  artifact rather than a real iSNV.
+- **Strand / mate distribution** (``<base_strand_distribution>``) — for each observed
+  base, the number of supporting reads split by mate: ``R1`` vs ``R2`` (with an ``SE``
+  count for single-end data). Depending on amplification techniques, a genuine variant is 
+  typically seen on both mates in proportion to coverage; a call that appears almost 
+  exclusively on R1 or R2 indicates **strand bias** and is treated with suspicion.
+
+These annotations feed the base-quality comparison and strand-bias plots produced by ASAP
+Tools (see `Step 8`_), so calls can be reviewed visually across all samples and amplicons.
+
+**Codon-Aware SNP Linkage & Read-Based Phasing**
+
+Two optional, GenBank-aware analyses annotate each SNP with how its variant allele
+co-occurs with other variants on the same sequencing read/fragment:
+
+*Codon-aware linkage* (``--codon_correction``) — for SNP pairs that fall within the
+same codon (per GenBank CDS annotations), each SNP is annotated with a
+``<codon_merge>`` element describing how the pair's alleles co-occur on the same
+fragments. Each observed combination of the two positions' bases is reported as a
+``<combo>`` and classified as:
+
+- ``reference`` — neither variant (both positions match the reference)
+- ``variant`` — both variants together, i.e. the actual combined codon change
+- ``discordant`` — only one of the two variants present (e.g. sequencing noise)
+
+The pair is also flagged as ``complete`` (both SNPs' frequencies agree closely
+enough that they represent the same underlying change) or ``partial``
+(frequencies diverge, suggesting independent or partially-linked events) via the 
+``--codon_correction_error`` parameter. This flows through to ASAP Tools' 
+SNP / Amino Acid table (see `Step 8`_).
+
+*Read-based phasing* (``--discover_roi``) — more general than codon-aware linkage,
+this phases *any* SNP against the reads that span it, annotating it with a
+``<linked_snps>`` list of other SNPs (regardless of codon membership) whose variant
+alleles fall on the same reads/fragments. Because phasing is established directly from
+individual reads rather than inferred, it is useful for resolving candidate haplotype
+structure or regions of interest spanning multiple variants. This process calculates the
+prevalence of linked SNPs relative to the number of spanning reads, providing a realistic
+prevalence values.
 
 Step 7 — iVAR Processing *(optional)*
 ---------------------------------------
@@ -480,23 +510,25 @@ iVAR [1]_ provides an alternative or complementary variant calling and consensus
 generation workflow. Enable the full iVAR workflow with ``--ivar true``, or enable
 individual steps independently.
 
-+-------------------------------+---------+------------------------------------------------+
-| Parameter                     | Default | Description                                    |
-+===============================+=========+================================================+
-| ``--ivar``                    | ``false``| Enable all iVAR steps (trim + variants + consensus) |
-+-------------------------------+---------+------------------------------------------------+
-| ``--ivar_trim``               | ``false``| iVAR primer trimming only (requires primer BED)|
-+-------------------------------+---------+------------------------------------------------+
-| ``--ivar_variants``           | ``false``| iVAR variant calling only                     |
-+-------------------------------+---------+------------------------------------------------+
-| ``--ivar_consensus``          | ``false``| iVAR consensus calling only                   |
-+-------------------------------+---------+------------------------------------------------+
-| ``--ivar_trim_extra_args``    | ``""``  | Additional ``ivar trim`` arguments              |
-+-------------------------------+---------+------------------------------------------------+
-| ``--ivar_variants_extra_args``| ``""``  | Additional ``ivar variants`` arguments          |
-+-------------------------------+---------+------------------------------------------------+
-| ``--ivar_consensus_extra_args``| ``""`` | Additional ``ivar consensus`` arguments         |
-+-------------------------------+---------+------------------------------------------------+
++---------------------------------+-----------+-----------------------------------------------------+
+| Parameter                       | Default   | Description                                         |
++=================================+===========+=====================================================+
+| ``--ivar``                      | ``false`` | Enable all iVAR steps (trim + variants + consensus) |
++---------------------------------+-----------+-----------------------------------------------------+
+| ``--ivar_trim``                 | ``false`` | iVAR primer trimming only (requires primer BED)     |
++---------------------------------+-----------+-----------------------------------------------------+
+| ``--ivar_variants``             | ``false`` | iVAR variant calling only                           |
++---------------------------------+-----------+-----------------------------------------------------+
+| ``--ivar_consensus``            | ``false`` | iVAR consensus calling only                         |
++---------------------------------+-----------+-----------------------------------------------------+
+| ``--ivar_trim_extra_args``      | ``""``    | Additional ``ivar trim`` arguments                  |
++---------------------------------+-----------+-----------------------------------------------------+
+| ``--ivar_variants_extra_args``  | ``""``    | Additional ``ivar variants`` arguments              |
++---------------------------------+-----------+-----------------------------------------------------+
+| ``--ivar_consensus_extra_args`` | ``""``    | Additional ``ivar consensus`` arguments             |
++---------------------------------+-----------+-----------------------------------------------------+
+
+.. _Step 8:
 
 Step 8 — ASAP Tools R Post-Processing *(optional)*
 ----------------------------------------------------
@@ -512,41 +544,89 @@ figures, and FASTA files. Processing follows a fan-out / gather pattern:
    PROCESS_COMBINE_RDATA (gather all)             →  sample_reports/rdata/ (Rdata)
          │                                           sample_reports/general_reports/ (CSV)
          ├── PROCESS_GENERATE_COV_TABLE           →  sample_reports/general_reports/ (Excel)
-         ├── PROCESS_QC_PLOTS                     →  sample_reports/plots/ (HTML + JPG)
+         ├── PROCESS_QC_PLOTS                     →  sample_reports/plots/ (JPG, +HTML if enabled)
+         ├── PROCESS_FASTP_PANEL                  →  sample_reports/plots/ (JPG, +HTML if enabled)
+         ├── PROCESS_SNP_PLOTS                    →  sample_reports/plots/ (JPG, +HTML if enabled)
          ├── PROCESS_GENERATE_FASTA               →  sample_reports/fasta/ (FASTA)
          ├── PROCESS_SNPS_TO_AMINOACIDS           →  sample_reports/rdata/ (Rdata)
          │                                           sample_reports/snp_reports/ (CSV)
          └── PROCESS_GENERATE_SNP_TABLE           →  sample_reports/snp_reports/ (CSV ± Excel)
 
-+--------------------------------------+----------+--------------------------------------------------+
-| Parameter                            | Default  | Description                                      |
-+======================================+==========+==================================================+
-| ``--asaptools_processing``           | ``true`` | Enable R post-processing                         |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_cov_table``            | ``true`` | Generate coverage depth table                    |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_qc_plots``             | ``true`` | Generate QC figures                              |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_generate_fasta``       | ``true`` | Export consensus FASTA files                     |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_snp_table``            | ``true`` | Generate SNP / iSNV table                        |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_snp_table_xls``        | ``false``| Also export SNP table as Excel                   |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_positions_of_interest``| ``null`` | CSV of genomic positions to annotate in outputs  |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_genbank_location``     | ``null`` | GenBank file for amino acid annotation           |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_min_location_depth``   | ``99``   | Minimum depth to report a position in tables     |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_snp_proportion``       | ``null`` | Override allele frequency threshold for SNP table|
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_max_sample_snp_count`` | ``50``   | Max SNPs per sample before flagging as noisy     |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_samples_to_remove``    | ``null`` | Sample IDs to exclude from combined outputs      |
-+--------------------------------------+----------+--------------------------------------------------+
-| ``--asaptools_breadth_threshold``    | ``null`` | Minimum breadth for FASTA export (uses ``--breadth`` if unset) |
-+--------------------------------------+----------+--------------------------------------------------+
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| Parameter                             | Default   | Description                                                                                                                |
++=======================================+===========+============================================================================================================================+
+| ``--asaptools_processing``            | ``true``  | Enable R post-processing                                                                                                   |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_cov_table``             | ``true``  | Generate coverage depth table                                                                                              |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_qc_plots``              | ``true``  | Generate QC figures (depth of coverage, % N bases, breadth heatmap, alignment summary, read funnel) and the FastP QC panel |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_snp_plots``             | ``true``  | Generate SNP figures (position prevalence, proportion density, strand bias, base quality, GenBank-driven genome track)     |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_generate_fasta``        | ``true``  | Export consensus FASTA files                                                                                               |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_snp_table``             | ``true``  | Generate SNP / iSNV table                                                                                                  |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_snp_table_xls``         | ``false`` | Also export SNP table as Excel                                                                                             |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_interactive_plots``     | ``false`` | Also export the self-contained interactive HTML widgets for the QC and SNP figures. JPGs are always produced; the HTML     |
+|                                       |           | widgets are expensive to render, so they are off by default.                                                               |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_positions_of_interest`` | ``null``  | CSV of genomic positions to annotate in outputs                                                                            |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_genbank_location``      | ``null``  | GenBank file for amino acid annotation                                                                                     |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_snp_proportion``        | ``null``  | Override allele frequency threshold for SNP table                                                                          |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_max_sample_snp_count``  | ``10000`` | Max SNPs per sample before flagging as noisy                                                                               |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_samples_to_remove``     | ``null``  | Sample IDs to exclude from combined outputs                                                                                |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_breadth_threshold``     | ``null``  | Minimum breadth for FASTA export (uses ``--breadth`` if unset)                                                             |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+
+**Outputs produced**
+
+The R suite provides ready-to-use outputs for sample QC and downstream analysis without
+requiring users to write custom analysis code:
+
+**Coverage Table** — per-sample, per-amplicon statistics including breadth of coverage,
+average depth, aligned reads, and depth at positions of interest. Depth thresholds flag
+positions without adequate coverage, distinguishing true absence of SNPs from
+insufficient data.
+
+**QC Figures** — static JPG figures (and, when ``--asaptools_interactive_plots true``,
+self-contained interactive HTML versions) produced by three independent, individually
+toggleable steps, all published to ``sample_reports/plots/``:
+
+- *QC Plots* (``--asaptools_qc_plots``) — reference depth of coverage, percent masked
+  bases ("N"s), a per-sample/per-amplicon breadth-of-coverage heatmap, an alignment
+  summary (read fate through trimming and alignment), and a read-fate funnel per amplicon.
+- *SNP Plots* (``--asaptools_snp_plots``) — SNP position prevalence and proportion
+  density across the panel, strand-bias assessment, base-quality comparison (called SNP
+  vs. reference base), and — when a GenBank reference is provided and the genome is
+  under 2 Mb — a combined gene-track / SNP-density / per-sample heatmap figure.
+- *FastP Panel* (bundled with ``--asaptools_qc_plots``) — pre/post-trim read counts,
+  filtering breakdown, Q20/Q30 rates, GC content, duplication rate, insert size, and
+  mean base quality per sequencing cycle, from the fastp/fastplong JSON reports.
+
+**SNP / iSNV Table** — a comprehensive table of detected variants across all samples and
+amplicons. User-defined frequency and depth thresholds separate true iSNVs from noise.
+When a GenBank reference is provided, coding-region SNPs are annotated with the
+resulting amino acid change, enabling immediate identification of resistance-conferring
+mutations. When ``--codon_correction`` finds a same-codon SNP pair with ``complete``
+linkage, the table reports a single combined row (e.g. ``T5118A|T5119A``) with one
+amino acid annotation for the joint codon change instead of two separate
+single-position rows; ``partial`` pairs show both the individual rows and the
+combined row.
+
+**Consensus FASTA Export** — consensus sequences for each sample and amplicon, exported
+at a user-defined breadth-of-coverage threshold. Suitable for downstream phylogenetic
+analysis or genome assembly. If no sample/assay combination meets the breadth threshold,
+a placeholder ``*_WARNING_no_sequences_passed_breadth_filter.fasta`` file is written
+instead of silently producing no output.
+
+.. _Step 9:
 
 Step 9 — MultiQC
 -----------------
@@ -555,88 +635,56 @@ MultiQC [CITATION]_ aggregates reports from FastQC (initial and post-trim),
 fastp/fastplong JSON, and SAMtools flagstat into a single interactive HTML report,
 published to ``<outdir>/sample_reports/multiqc/``.
 
-----
-
-Unique Functionality
-====================
-
-Multi-Reference Analysis
--------------------------
-
-ASAP is designed to analyze multiple amplicon targets simultaneously in a single run.
-This supports:
-
-- **Species co-analysis** — e.g., RSV-A and RSV-B from the same sequencing run
-- **Multi-gene AMR panels** — multiple resistance genes across *M. tuberculosis*
-- **Cross-contamination QC** — include neighboring-species references to detect and quantify cross-contamination between samples
-
-Multi-reference analysis can be enabled by:
-
-- Providing multiple sequences in a multi-FASTA or JSON reference file
-- Specifying multiple GenBank files (``"./refs/*.gb"``)
-- Using the ASAP Excel template with multiple amplicon rows
-- Subsetting output annotation to specific positions via ``--asaptools_positions_of_interest``
-
-Primer Masking
----------------
-
-Primer masking prevents primer-derived base calls from distorting SNP frequencies or
-consensus sequences — critical for amplicon assays where primers are included in
-the sequenced region. A per-amplicon log file tallies reads with and without detected
-primer sequences, enabling confirmation that the correct primer regions are being masked.
-See `Step 3`_ for full parameter details.
-
-Percent-Identity Filtering
----------------------------
-
-Percent-identity filtering is especially valuable for:
-
-- **Near-neighbor co-infections** — e.g., distinguishing *M. tuberculosis* from
-  non-tuberculous mycobacteria when primers amplify both
-- **Resistance gene specificity** — ensuring only reads from the precise target gene
-  are used for resistance calling, preventing false calls from paralogs or related genes
-
-See `Step 4`_ for full parameter details.
-
-SMOR Masking and SMOR Correction
-----------------------------------
-
-SMOR approaches leverage paired-end read overlap to reduce sequencing errors without
-requiring additional wet-lab steps. The ~8-fold error reduction achieved by SMOR Masking
-enables resolution of minor allele frequencies (iSNVs) that would otherwise be
-indistinguishable from sequencing noise, making it particularly powerful for:
-
-- High-resolution AMR profiling in heteroresistant *M. tuberculosis* infections
-- Detection of low-frequency viral variants in mixed infections
-- Distinguishing true iSNVs from sequencing artifacts at low allele frequencies
-
-See `Step 5`_ for the distinction between SMOR Masking and SMOR Correction.
-
-ASAP Tools: Visualizations and Tabular Outputs
------------------------------------------------
-
-The R post-processing suite provides ready-to-use outputs for sample QC and downstream
-analysis without requiring users to write custom analysis code:
-
-**Coverage Table** — per-sample, per-amplicon statistics including breadth of coverage,
-average depth, aligned reads, and depth at positions of interest. Depth thresholds flag
-positions without adequate coverage, distinguishing true absence of SNPs from
-insufficient data.
-
-**QC Figures** — interactive HTML plots and static JPG figures showing depth of coverage
-across samples, percent masked bases ("N"s), and SNP locations across the panel.
-
-**SNP / iSNV Table** — a comprehensive table of detected variants across all samples and
-amplicons. User-defined frequency and depth thresholds separate true iSNVs from noise.
-When a GenBank reference is provided, coding-region SNPs are annotated with the
-resulting amino acid change, enabling immediate identification of resistance-conferring
-mutations.
-
-**Consensus FASTA Export** — consensus sequences for each sample and amplicon, exported
-at a user-defined breadth-of-coverage threshold. Suitable for downstream phylogenetic
-analysis or genome assembly.
+**FastQC and MultiQC are skipped by default** (``--skip_fastqc`` and
+``--skip_multiqc`` both default to ``true``). To enable them, pass
+``--skip_fastqc false`` and/or ``--skip_multiqc fa+lse``. When FastQC is skipped but
+MultiQC runs, the MultiQC report is built from fastp JSON and flagstat only.
 
 ----
+
+Performance Considerations
+==========================
+
+**SLURM resource scaling:** All processes use exponential retry. Memory and wall-time
+double on each retry attempt (``memory = { N.GB * 2**(task.attempt-1) }``), preventing
+transient resource limits from aborting runs.
+
+**R post-processing memory:** ``PROCESS_COMBINE_RDATA`` (default 100 GB) and
+``PROCESS_SNPS_TO_AMINOACIDS`` (default 30 GB) are the most memory-intensive steps,
+as they load all per-sample Rdata objects simultaneously. For large runs (100+ samples),
+ensure sufficient memory is available on the target SLURM partition.
+
+**Shared environment cache (``--env_dir``):** By default Conda/Singularity environments
+are cached under Nextflow's working directory. Set ``--env_dir <path>`` to redirect the
+caches to ``<path>/conda`` and ``<path>/singularity`` — point multiple runs (or all users
+on a cluster) at one shared location to build each environment once and reuse it, rather
+than rebuilding per run. Unset leaves Nextflow's default behavior unchanged.
+
+**SMOR and identity filtering:** These steps add computational overhead but substantially
+improve variant call quality. For routine screening, they can be omitted; for
+high-resolution iSNV detection or resistance profiling, they are strongly recommended.
+
+**Primer masking:** Runs on a single CPU and completes quickly relative to alignment.
+The BAM re-sort step (``--mask_bam true``) adds a small overhead but ensures downstream
+tools receive a correctly sorted BAM.
+
+**Read-based phasing (``--discover_roi``):** This is the most compute-intensive option
+inside ASAP BAM processing. It first makes an extra pass over the BAM to build a
+per-fragment allele table, then runs a **pairwise (O(n²)) co-occurrence search** over
+every qualifying SNP pair per amplicon. Cost therefore grows with read depth,
+quadratically with the number of candidate SNPs, and with **read/fragment length**:
+only SNP pairs a single fragment can physically span are evaluated, so short Illumina
+reads skip most distant pairs, whereas long reads (ONT / PacBio) and large paired-end
+inserts bring far more pairs within reach and make the search substantially denser.
+Noisy or highly diverse amplicons (and low variant-frequency thresholds, which admit
+many candidates) are the expensive cases. The dominant lever is
+``--discover_roi_min_snp_perc``: it pre-filters the SNP set before the O(n²) search, so
+raising it sharply reduces runtime on noisy data. By contrast,
+codon-aware linkage (``--codon_correction``) is bounded to same-codon pairs and is
+comparatively cheap. Both are off by default and add no cost unless enabled.
+
+----
+
 
 Output Structure
 ================
@@ -694,8 +742,100 @@ Output Structure
 
 ----
 
-Example Commands
-================
+Custom Analysis with Rdata Frames
+=================================
+
+Every table and figure ASAP Tools produces is built from a small set of tidy data frames
+saved as ``.Rdata`` objects under ``sample_reports/rdata/``. These are provided so you can
+load the same data into an interactive R session and build **custom plots or analyses**
+without re-parsing XML. Load an object with ``load()`` (it restores the named frames into
+your environment):
+
+.. code-block:: r
+
+   load("sample_reports/rdata/MyRun_ASAP_Data.Rdata")   # -> final_asap, final_snps, final_array
+   load("sample_reports/rdata/SNP_Amino_Acid_Table.Rdata")  # -> Amino_Acids, Gene_SNPS (GenBank runs)
+
+   library(tidyverse)
+   # Example: depth-of-coverage trace for one sample/amplicon
+   final_array %>%
+     filter(name == "Sample01", assay_name == "gyrA") %>%
+     ggplot(aes(position, depth)) + geom_line()
+
+``<name>_ASAP_Data.Rdata`` — combined across all samples
+--------------------------------------------------------
+
+**final_asap** — one row per sample × assay (amplicon); the master summary frame. Key
+columns: ``run``, ``name`` (sample ID), ``name_short`` (shortened plot label),
+``assay_name``, ``assay_gene``, ``assay_type``, ``amplicon_number``; read-fate counts
+(``total_reads``, ``trimmed_reads``, ``mapped_reads``, ``unassigned_reads``,
+``unmapped_reads``, ``amplicon_reads``, ``aligned_reads``, ``primer_reads``,
+``no_primer_reads``, ``identity_input``, ``identity_discarded``, ``smor_*``); coverage
+(``breadth``, ``avg_depth``); and the ``consensus_seq`` plus comma-delimited per-position
+arrays (``depths``, ``proportions``, ``n_reads``, ``quality_discards``). The per-position
+arrays are pre-expanded for you in ``final_array`` — prefer that for plotting.
+
+**final_snps** — one row per detected SNP / iSNV per sample × assay. Key columns:
+``run``, ``name``, ``name_short``, ``assay_name``, ``amplicon_number``, ``snp_name``,
+``snp_position``, ``snp_reference``, ``snp_depth``, ``snp_proportion`` (allele
+frequency, %), ``location_depth`` (total depth at the position), and the codon-merge /
+linked-SNP annotation columns (``codon_merge_*``, ``linked_snp_*``) when
+``--codon_correction`` / ``--discover_roi`` are enabled.
+
+**final_array** — long/tidy per-position table (one row per sample × assay × position):
+``run``, ``name``, ``name_short``, ``assay_name``, ``position``, ``depth``,
+``proportion``, ``n_reads``, ``quality_discards``. This is the frame behind the coverage,
+percent-N, and depth plots and is the easiest starting point for custom per-position
+figures.
+
+``SNP_Amino_Acid_Table.Rdata`` — GenBank runs only
+--------------------------------------------------
+
+Written only when a GenBank reference (or ``--asaptools_genbank_location``) supplies CDS
+annotations.
+
+**Amino_Acids** — one row per coding SNP: ``assay_name``, ``SNP`` (genome-level variant,
+e.g. ``A1401G``), ``Product`` (gene/product name), and ``AA`` (amino acid change).
+
+**Gene_SNPS** — the genome-to-gene coordinate mapping for each SNP (gene-relative
+position), joined to ``assay_name`` — useful for annotating variants against gene
+coordinates rather than genome coordinates.
+
+.. note::
+
+   The per-sample ``sample_info/<sample>/rdata/<sample>_XML_Data.Rdata`` files hold the
+   same three frames before cohort merging, under the names ``ASAP``, ``SNPS``, and
+   ``array_info`` — handy for inspecting a single sample.
+
+----
+
+Examples
+========
+
+These commands assume the ``ASAP_nextflow_env`` environment is active and you are in the
+``nextflow`` directory (see Installation_ for setup).
+
+**Illumina paired-end reads with a GenBank reference (SLURM) — minimal:**
+
+.. code-block:: bash
+
+   nextflow run main.nf \
+     --read_dir        ./reads/ \
+     --reference_input "./refs/*.gb" \
+     --outdir          ASAP_Results \
+     --file_name       MyRun \
+     -profile slurm
+
+**JSON reference passed directly (no conversion):**
+
+.. code-block:: bash
+
+   nextflow run main.nf \
+     --read_dir        ./reads/ \
+     --reference_input assay.json \
+     --outdir          Results \
+     --file_name       MyRun \
+     -profile slurm
 
 **TB amplicon panel — primer masking, identity filtering, SMOR correction, full asaptools:**
 
@@ -771,27 +911,89 @@ Example Commands
      --combine_output        true \
      -profile slurm
 
+**Resume a failed or interrupted run:**
+
+.. code-block:: bash
+
+   nextflow run main.nf [params] -resume
+
 ----
 
-Performance Considerations
-==========================
+Requirements
+============
 
-**SLURM resource scaling:** All processes use exponential retry. Memory and wall-time
-double on each retry attempt (``memory = { N.GB * 2**(task.attempt-1) }``), preventing
-transient resource limits from aborting runs.
+- **Nextflow** 25.10.4 — provided via ``ASAP_nextflow_env.yml``
+- **nf-schema** plugin 2.5.1 — loaded automatically via ``nextflow.config`` on first run
+- **nf-test** 0.9.5 — provided via ``ASAP_nextflow_env.yml``; required only to run the test suite
+- **Singularity / Apptainer** (for containerized alignment and QC tools)
+- **Conda / Mamba** (environments are built automatically from module YMLs — no manual setup required)
+- A reference file in FASTA, GenBank, Excel (.xlsx), or JSON format
 
-**R post-processing memory:** ``PROCESS_COMBINE_RDATA`` (default 100 GB) and
-``PROCESS_SNPS_TO_AMINOACIDS`` (default 30 GB) are the most memory-intensive steps,
-as they load all per-sample Rdata objects simultaneously. For large runs (100+ samples),
-ensure sufficient memory is available on the target SLURM partition.
+**Execution profiles:**
 
-**SMOR and identity filtering:** These steps add computational overhead but substantially
-improve variant call quality. For routine screening, they can be omitted; for
-high-resolution iSNV detection or resistance profiling, they are strongly recommended.
++---------------+---------------------+---------------------+-----------------------------------+
+| Profile       | Executor            | Containers          | Best For                          |
++===============+=====================+=====================+===================================+
+| ``slurm``     | SLURM (child jobs)  | Singularity + Conda | Production HPC runs               |
++---------------+---------------------+---------------------+-----------------------------------+
+| ``conda``     | Local (current node)| Conda               | Interactive ``srun`` or laptop    |
++---------------+---------------------+---------------------+-----------------------------------+
 
-**Primer masking:** Runs on a single CPU and completes quickly relative to alignment.
-The BAM re-sort step (``--mask_bam true``) adds a small overhead but ensures downstream
-tools receive a correctly sorted BAM.
+**Key tool versions:**
+
++-----------+---------+---------------------------------------------+
+| Tool      | Version | Purpose                                     |
++===========+=========+=============================================+
+| fastp     | 0.23.4  | Illumina read QC and adapter trimming       |
++-----------+---------+---------------------------------------------+
+| fastplong | 0.4.1   | ONT / PacBio read QC                        |
++-----------+---------+---------------------------------------------+
+| Bowtie2   | 2.x     | Short-read alignment                        |
++-----------+---------+---------------------------------------------+
+| BWA-MEM   | 0.7.x   | Short-read alignment (alternative)          |
++-----------+---------+---------------------------------------------+
+| minimap2  | 2.x     | Long-read alignment                         |
++-----------+---------+---------------------------------------------+
+| SAMtools  | 1.x     | BAM manipulation and indexing               |
++-----------+---------+---------------------------------------------+
+| iVAR      | 1.4.4   | Primer trimming, variant calling, consensus |
++-----------+---------+---------------------------------------------+
+| FastQC    | 0.12.1  | Per-sample read QC                          |
++-----------+---------+---------------------------------------------+
+| MultiQC   | latest  | Aggregated QC reporting                     |
++-----------+---------+---------------------------------------------+
+
+----
+
+Installation
+============
+
+.. code-block:: bash
+
+   # Clone the repository
+   git clone https://github.com/wtporter/ASAP.git
+   cd ASAP
+
+   # Create the Nextflow environment from the provided YAML (includes Nextflow 25.10.4 and nf-test 0.9.5)
+   conda env create -f ASAP_nextflow_env.yml
+
+   # Activate the environment
+   conda activate ASAP_nextflow_env
+
+   cd nextflow
+
+   # Verify Nextflow is available
+   nextflow -version
+
+   # View full parameter help
+   nextflow run main.nf --help
+
+The ``ASAP_nextflow_env.yml`` file at the repository root creates a conda environment
+named ``ASAP_nextflow_env`` containing Nextflow 25.10.4 and nf-test 0.9.5 (required
+only for running the test suite). The **nf-schema** plugin (``nf-schema@2.5.1``) is
+declared in ``nextflow.config`` and downloaded automatically on first run. Singularity
+containers and all Conda environments for pipeline steps are also resolved automatically
+— no further manual setup is required.
 
 ----
 
@@ -882,6 +1084,29 @@ Test Descriptions
 |      |                                                      | suite; validates ``snp_reports/``, ``plots/``, and  |
 |      |                                                      | ``SNP_Amino_Acid_Table.Rdata`` output               |
 +------+------------------------------------------------------+-----------------------------------------------------+
+
+R Unit Tests
+------------
+
+Independent of the ``nf-test`` end-to-end suite above, the R post-processing functions
+in ``asap_tools/`` have a dedicated ``testthat`` unit-test suite:
+
+.. code-block:: bash
+
+   cd /path/to/ASAP
+   ./asap_tools/tests/run_r_tests.sh
+
+``run_r_tests.sh`` syncs a dedicated R conda environment from
+``nextflow/modules/asap_tools/r_env.yml`` (creating or updating it under
+``nextflow/work/r_test_env``) and submits a SLURM job running
+``testthat::test_dir()`` over ``asap_tools/tests/testthat/``. Logs are written to
+``asap_tools/tests/logs/asap_r_tests_<JOBID>.log``.
+
+Current coverage includes the depth/read-count/proportion accessor functions
+(``_ASAP.get.*``), codon-merge expansion, SNP distribution parsing, XML parsing
+(``_read.ASAP.*``), and SNP-to-amino-acid translation (``_snps.to.amino``) — a unit-test
+layer for the R functions themselves, complementary to the full-pipeline ``nf-test`` suite
+above.
 
 ----
 

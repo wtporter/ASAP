@@ -12,18 +12,9 @@ import argparse
 import logging
 import pysam
 from operator import attrgetter
+from itertools import groupby
 
-def grouped_pairs(iterable):
-    """Groups name-sorted reads into pairs."""
-    it = iter(iterable)
-    for x in it:
-        try:
-            yield x, next(it)
-        except StopIteration:
-            yield x, None
-
-def _get_consensus(read, pair, fill_char):
-    QUAL_DIFF_THRESHOLD = 10
+def _get_consensus(read, pair, fill_char, qual_diff_threshold):
     # Determine the total span of the fragment (Union)
     union_start = min(read.reference_start, pair.reference_start)
     union_end = max(read.reference_end, pair.reference_end)
@@ -82,11 +73,11 @@ def _get_consensus(read, pair, fill_char):
                 consensus_qual.append(min(q1 + q2, 60))
             else:
                 # Mismatch: Apply Quality-based correction
-                if q1 >= q2 + QUAL_DIFF_THRESHOLD:
+                if q1 >= q2 + qual_diff_threshold:
                     consensus_seq += b1
                     consensus_qual.append(max(0, q1 - q2))
                     stats['corrected'] += 1
-                elif q2 >= q1 + QUAL_DIFF_THRESHOLD:
+                elif q2 >= q1 + qual_diff_threshold:
                     consensus_seq += b2
                     consensus_qual.append(max(0, q2 - q1))
                     stats['corrected'] += 1
@@ -110,7 +101,7 @@ def _get_consensus(read, pair, fill_char):
 
     return (consensus_seq, consensus_qual, cigartuples, union_start, stats)
 
-def _write_bam(samdata, out_file, fill_char):
+def _write_bam(samdata, out_file, fill_char, qual_diff_threshold):
     # Use a temporary name for sorting to avoid "file-in-use" indexing errors
     tmp_out = out_file + ".unsorted.tmp"
     outdata = pysam.AlignmentFile(tmp_out, "wb", template=samdata)
@@ -124,10 +115,20 @@ def _write_bam(samdata, out_file, fill_char):
         input_reads = len(ref_reads)
         pairs_dropped = 0
         consensus_written = 0
+        singleton_reads = 0
 
-        for read, pair in grouped_pairs(ref_reads):
-            if not pair or read.query_name != pair.query_name:
+        for name, group in groupby(ref_reads, key=attrgetter('query_name')):
+            group = list(group)
+            if len(group) == 1:
+                # No mate aligned to this reference; can't form a SMOR consensus.
+                singleton_reads += 1
                 continue
+            if len(group) != 2:
+                logging.warning(f"Unexpected {len(group)} alignments for {name} on {ref_name}; dropping")
+                pairs_dropped += len(group)
+                continue
+
+            read, pair = group
             if read.is_unmapped or pair.is_unmapped:
                 pairs_dropped += 2
                 continue
@@ -138,7 +139,7 @@ def _write_bam(samdata, out_file, fill_char):
                 continue
 
             try:
-                seq, qual, cigar, start, stats = _get_consensus(read, pair, fill_char)
+                seq, qual, cigar, start, stats = _get_consensus(read, pair, fill_char, qual_diff_threshold)
                 if seq:
                     new_read = pysam.AlignedSegment()
                     new_read.query_name = read.query_name
@@ -151,13 +152,17 @@ def _write_bam(samdata, out_file, fill_char):
                     new_read.mapping_quality = max(read.mapping_quality, pair.mapping_quality)
                     outdata.write(new_read)
                     consensus_written += 1
+                else:
+                    pairs_dropped += 2
             except Exception as e:
                 logging.error(f"Error processing {read.query_name}: {e}")
+                pairs_dropped += 2
 
         smor_stats[ref_name] = {
             'input_reads': input_reads,
             'pairs_dropped': pairs_dropped,
             'consensus_reads': consensus_written,
+            'singleton_reads': singleton_reads,
         }
 
     outdata.close()
@@ -177,15 +182,16 @@ def _write_bam(samdata, out_file, fill_char):
         os.remove(tmp_out)
 
     with open("smor_stats.tsv", "w") as stats_out:
-        stats_out.write("ref_name\tinput_reads\tpairs_dropped\tconsensus_reads\n")
+        stats_out.write("ref_name\tinput_reads\tpairs_dropped\tconsensus_reads\tsingleton_reads\n")
         for ref, s in smor_stats.items():
-            stats_out.write(f"{ref}\t{s['input_reads']}\t{s['pairs_dropped']}\t{s['consensus_reads']}\n")
+            stats_out.write(f"{ref}\t{s['input_reads']}\t{s['pairs_dropped']}\t{s['consensus_reads']}\t{s['singleton_reads']}\n")
 
 def main():
     parser = argparse.ArgumentParser(description="SMOR Consensus Generator with Corrected CIGARs")
     parser.add_argument("-b", "--bam", required=True, help="Input BAM file")
     parser.add_argument("-o", "--out", help="Output BAM file name")
     parser.add_argument("-c", "--fill-character", default="N", help="Character for ambiguous mismatches")
+    parser.add_argument("-q", "--qual-diff-threshold", type=int, default=10, help="Phred quality difference required to select the higher-quality base during consensus correction (default: 10)")
     # Added a logfile argument to match what Nextflow expects
     parser.add_argument("-l", "--logfile", default="smor_processing.log", help="Log file name")
     
@@ -205,7 +211,7 @@ def main():
         args.out = os.path.basename(args.bam).replace(".bam", "_SMOR.bam")
 
     with pysam.AlignmentFile(args.bam, "rb") as samdata:
-        _write_bam(samdata, args.out, args.fill_character)
+        _write_bam(samdata, args.out, args.fill_character, args.qual_diff_threshold)
         
 if __name__ == "__main__":
     main()

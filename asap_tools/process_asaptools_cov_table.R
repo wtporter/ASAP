@@ -1,8 +1,10 @@
 #!/usr/bin/env Rscript
 
-library(tidyverse)
-library(openxlsx)
-library(data.table)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(openxlsx)
+  library(data.table)
+})
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 4) {
@@ -39,7 +41,7 @@ if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
     group_by(name, assay_name) %>%
     summarise(
       total_bp = n(),
-      n_cov = sum(depth > min_depth, na.rm = TRUE),
+      n_cov = sum(depth >= min_depth, na.rm = TRUE),
       .groups = 'drop'
     ) %>%
     mutate(Coverage = round(100 * (n_cov / total_bp), 2)) %>%
@@ -61,6 +63,21 @@ if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
     )) %>%
     ungroup()
 
+  # Guard: POI `seqnames` must match the data's `assay_name`, otherwise the
+  # left_join + filter below drops every row and the styling loop crashes on an
+  # empty table. Fail loudly with both name sets (mirrors process_combine_rdata.R).
+  poi_refs   <- unique(as.character(Gene_Positions$assay_name))
+  data_names <- unique(as.character(final_array$assay_name))
+  if (length(data_names) > 0 && !any(data_names %in% poi_refs)) {
+    stop(paste0(
+      "Positions-of-interest reference names do not match the data.\n",
+      "  POI CSV 'seqnames': ", paste(poi_refs,   collapse = ", "), "\n",
+      "  data 'assay_name':  ", paste(data_names, collapse = ", "), "\n",
+      "Fix the 'seqnames' column in ", poi_csv,
+      " to match the reference/assay name."
+    ))
+  }
+
   array_info <- left_join(final_array, Gene_Positions, by = c("position", "assay_name")) %>%
     filter(!is.na(gene)) # Only keep positions that fall within our defined ranges
 
@@ -68,7 +85,7 @@ if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
     group_by(name, assay_name) %>%
     summarise(
       total_bp = n(),
-      n_cov = sum(depth > min_depth, na.rm = TRUE),
+      n_cov = sum(depth >= min_depth, na.rm = TRUE),
       .groups = 'drop'
     ) %>%
     mutate(Coverage = round(100 * (n_cov / total_bp), 2)) %>%
@@ -79,7 +96,7 @@ if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
     group_by(name, assay_name, gene) %>%
     summarise(
       total_bp = n(),
-      n_cov = sum(depth > min_depth, na.rm = TRUE),
+      n_cov = sum(depth >= min_depth, na.rm = TRUE),
       .groups = 'drop'
     ) %>%
     mutate(Coverage = round(100 * (n_cov / total_bp), 2)) %>%
@@ -107,11 +124,19 @@ getStyle_simple_100 <- function(value) {
   return(createStyle(fgFill = color_breaks_10[color_index], border = all_borders))
 }
 
-# Apply styles (Starting from col 2 to skip sample name)
-for (row in 1:nrow(Amplicon_Coverage)) {
-  for (col in 2:ncol(Amplicon_Coverage)) {
-    val <- Amplicon_Coverage[[row, col]]
-    addStyle(wb, "Amplicon_Coverage", style = getStyle_simple_100(val), rows = row + 1, cols = col)
+# Apply styles (Starting from col 2 to skip sample name). Guard against an empty
+# or single-column table so `1:nrow`/`2:ncol` can't run past the end — use
+# seq_len/seq so a zero-row or no-coverage-column result is skipped, not crashed.
+if (nrow(Amplicon_Coverage) == 0 || ncol(Amplicon_Coverage) < 2) {
+  warning("Amplicon_Coverage has no coverage values to style ",
+          "(rows: ", nrow(Amplicon_Coverage), ", cols: ", ncol(Amplicon_Coverage),
+          "). Writing the table without conditional styling.")
+} else {
+  for (row in seq_len(nrow(Amplicon_Coverage))) {
+    for (col in seq(2, ncol(Amplicon_Coverage))) {
+      val <- Amplicon_Coverage[[row, col]]
+      addStyle(wb, "Amplicon_Coverage", style = getStyle_simple_100(val), rows = row + 1, cols = col)
+    }
   }
 }
 

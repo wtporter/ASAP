@@ -1,11 +1,11 @@
-read.ASAP.individual <- function(XML) {
-  library(xml2)
-  library(tidyverse)
+library(xml2)
+library(tidyverse)
 
+read.ASAP.individual <- function(XML, run_name = "Individual_XML_processing") {
   Out <- data.frame()
   xml_data <- xml2::read_xml(XML, options = "HUGE")
 
-  Run_Info <- data.frame(run = "Individual_XML_processing")
+  Run_Info <- data.frame(run = run_name)
 
   Sample_Node <- xml_data
 
@@ -45,16 +45,18 @@ read.ASAP.individual <- function(XML) {
 
       Amplicon_Info <- data.frame(
         amplicon_number      = AMPLICON,
-        amplicon_reads       = xml_attr(Amplicon_Node, "reads"),
+        amplicon_variant = ifelse(!is.na(xml_attr(Amplicon_Node, "variant")), xml_attr(Amplicon_Node, "variant"), "No variant"),
         aligned_reads        = xml_attr(Amplicon_Node, "aligned_reads"),
         primer_reads         = xml_attr(Amplicon_Node, "primer_reads"),
         no_primer_reads      = xml_attr(Amplicon_Node, "no_primer_reads"),
+        primer_removed_reads = xml_attr(Amplicon_Node, "primer_removed_reads"),
         identity_input       = xml_attr(Amplicon_Node, "identity_input"),
         identity_discarded   = xml_attr(Amplicon_Node, "identity_discarded"),
         smor_input           = xml_attr(Amplicon_Node, "smor_input"),
         smor_pairs_dropped   = xml_attr(Amplicon_Node, "smor_pairs_dropped"),
         smor_consensus_reads = xml_attr(Amplicon_Node, "smor_consensus_reads"),
-        amplicon_variant = ifelse(!is.na(xml_attr(Amplicon_Node, "variant")), xml_attr(Amplicon_Node, "variant"), "No variant"),
+        smor_singleton_reads = xml_attr(Amplicon_Node, "smor_singleton_reads"),
+        amplicon_reads       = xml_attr(Amplicon_Node, "reads"),
         breadth          = get_node_text(Amplicon_Node, "breadth", "No Breadth"),
         avg_depth        = get_node_text(Amplicon_Node, "average_depth", "No Average Depth"),
         consensus_seq    = get_node_text(Amplicon_Node, "consensus_sequence", "No Consensus Sequence"),
@@ -75,7 +77,7 @@ read.ASAP.individual <- function(XML) {
                 "unmapped_reads", "amplicon_reads", "aligned_reads",
                 "primer_reads", "no_primer_reads",
                 "identity_input", "identity_discarded",
-                "smor_input", "smor_pairs_dropped", "smor_consensus_reads",
+                "smor_input", "smor_pairs_dropped", "smor_consensus_reads", "smor_singleton_reads",
                 "breadth", "avg_depth")
   num_cols <- intersect(num_cols, names(Out))
   Out[num_cols] <- lapply(Out[num_cols], function(x) as.numeric(as.character(x)))

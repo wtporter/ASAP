@@ -1,10 +1,10 @@
-read.ASAP.snps.individual <- function(XML) {
-  library(xml2)
-  library(tidyverse)
+library(xml2)
+library(tidyverse)
 
+read.ASAP.snps.individual <- function(XML, run_name = "Individual_XML_processing") {
   Out      <- data.frame()
   xml_data <- read_xml(XML, options = "HUGE")
-  Run_Info <- data.frame(run = "Individual_XML_processing")
+  Run_Info <- data.frame(run = run_name)
 
   Sample_Node <- xml_data
 
@@ -59,15 +59,120 @@ read.ASAP.snps.individual <- function(XML) {
             snp_depth <- "0"; snp_proportion <- "0"; snp_call <- "N/A"
           }
 
+          CodonMerge_Nodes <- xml_find_all(SNP_Node, "codon_merge")
+          if (length(CodonMerge_Nodes) > 0) {
+            cm_distributions <- character(length(CodonMerge_Nodes))
+            for (m in seq_along(CodonMerge_Nodes)) {
+              dist_node <- xml_find_first(CodonMerge_Nodes[[m]], "codon_distribution")
+              if (!inherits(dist_node, "xml_missing")) {
+                attrs <- xml_attrs(dist_node)
+                cm_distributions[m] <- paste(names(attrs), attrs, sep = "=", collapse = ",")
+              } else {
+                cm_distributions[m] <- ""
+              }
+            }
+
+            codon_merge_name         <- paste(xml_attr(CodonMerge_Nodes, "name"),      collapse = ";")
+            codon_merge_region       <- paste(xml_attr(CodonMerge_Nodes, "region"),    collapse = ";")
+            codon_merge_position     <- paste(xml_attr(CodonMerge_Nodes, "position"),  collapse = ";")
+            codon_merge_codon_depth  <- paste(xml_attr(CodonMerge_Nodes, "codon_depth"), collapse = ";")
+            codon_merge_reference    <- paste(xml_attr(CodonMerge_Nodes, "reference"), collapse = ";")
+            codon_merge_distribution <- paste(cm_distributions, collapse = ";")
+          } else {
+            codon_merge_name         <- NA_character_
+            codon_merge_region       <- NA_character_
+            codon_merge_position     <- NA_character_
+            codon_merge_codon_depth  <- NA_character_
+            codon_merge_reference    <- NA_character_
+            codon_merge_distribution <- NA_character_
+          }
+
+          LinkedSNPs_Parent <- xml_find_first(SNP_Node, "linked_snps")
+          has_linked_snp <- !inherits(LinkedSNPs_Parent, "xml_missing")
+          if (has_linked_snp) {
+            LinkedSNP_Nodes <- xml_find_all(SNP_Node, "linked_snps/linked_snp")
+            if (length(LinkedSNP_Nodes) > 0) {
+              linked_snp_targets       <- paste(xml_attr(LinkedSNP_Nodes, "target_variant"),     collapse = ";")
+              linked_snp_linkage_pcts  <- paste(xml_attr(LinkedSNP_Nodes, "linkage_pct"),        collapse = ";")
+              linked_snp_co_counts     <- paste(xml_attr(LinkedSNP_Nodes, "co_occurring_count"), collapse = ";")
+              linked_snp_shared_depths <- paste(xml_attr(LinkedSNP_Nodes, "shared_read_depth"),  collapse = ";")
+            } else {
+              linked_snp_targets       <- NA_character_
+              linked_snp_linkage_pcts  <- NA_character_
+              linked_snp_co_counts     <- NA_character_
+              linked_snp_shared_depths <- NA_character_
+            }
+          } else {
+            linked_snp_targets       <- NA_character_
+            linked_snp_linkage_pcts  <- NA_character_
+            linked_snp_co_counts     <- NA_character_
+            linked_snp_shared_depths <- NA_character_
+          }
+
+          snp_ref <- xml_attr(SNP_Node, "reference")
+
+          call_qual_node <- xml_find_first(SNP_Node,
+            paste0("base_quality/qual[@base='", snp_call, "']"))
+          if (!inherits(call_qual_node, "xml_missing")) {
+            snp_call_qual_mean   <- xml_attr(call_qual_node, "mean")
+            snp_call_qual_median <- xml_attr(call_qual_node, "median")
+            snp_call_qual_min    <- xml_attr(call_qual_node, "min")
+            snp_call_qual_max    <- xml_attr(call_qual_node, "max")
+          } else {
+            snp_call_qual_mean <- snp_call_qual_median <- snp_call_qual_min <- snp_call_qual_max <- NA_character_
+          }
+
+          ref_qual_node <- xml_find_first(SNP_Node,
+            paste0("base_quality/qual[@base='", snp_ref, "']"))
+          if (!inherits(ref_qual_node, "xml_missing")) {
+            snp_ref_qual_mean   <- xml_attr(ref_qual_node, "mean")
+            snp_ref_qual_median <- xml_attr(ref_qual_node, "median")
+            snp_ref_qual_min    <- xml_attr(ref_qual_node, "min")
+            snp_ref_qual_max    <- xml_attr(ref_qual_node, "max")
+          } else {
+            snp_ref_qual_mean <- snp_ref_qual_median <- snp_ref_qual_min <- snp_ref_qual_max <- NA_character_
+          }
+
+          strand_node <- xml_find_first(SNP_Node,
+            paste0("base_strand_distribution/strand[@base='", snp_call, "']"))
+          if (!inherits(strand_node, "xml_missing")) {
+            snp_call_R1 <- xml_attr(strand_node, "R1")
+            snp_call_R2 <- xml_attr(strand_node, "R2")
+            snp_call_SE <- xml_attr(strand_node, "SE")
+          } else {
+            snp_call_R1 <- snp_call_R2 <- snp_call_SE <- NA_character_
+          }
+
           SNP_Info <- data.frame(
             location_depth   = xml_attr(SNP_Node, "depth"),
             snp_name         = xml_attr(SNP_Node, "name"),
             snp_position     = xml_attr(SNP_Node, "position"),
-            snp_reference    = xml_attr(SNP_Node, "reference"),
+            snp_reference    = snp_ref,
             snp_depth        = snp_depth,
             snp_proportion   = snp_proportion,
             snp_call         = snp_call,
-            snp_distribution = SNP_Dist
+            snp_distribution = SNP_Dist,
+            codon_merge_name         = codon_merge_name,
+            codon_merge_region       = codon_merge_region,
+            codon_merge_position     = codon_merge_position,
+            codon_merge_codon_depth  = codon_merge_codon_depth,
+            codon_merge_reference    = codon_merge_reference,
+            codon_merge_distribution = codon_merge_distribution,
+            snp_call_qual_mean       = snp_call_qual_mean,
+            snp_call_qual_median     = snp_call_qual_median,
+            snp_call_qual_min        = snp_call_qual_min,
+            snp_call_qual_max        = snp_call_qual_max,
+            snp_ref_qual_mean        = snp_ref_qual_mean,
+            snp_ref_qual_median      = snp_ref_qual_median,
+            snp_ref_qual_min         = snp_ref_qual_min,
+            snp_ref_qual_max         = snp_ref_qual_max,
+            snp_call_R1              = snp_call_R1,
+            snp_call_R2              = snp_call_R2,
+            snp_call_SE              = snp_call_SE,
+            linked_snp_targets       = linked_snp_targets,
+            linked_snp_linkage_pcts  = linked_snp_linkage_pcts,
+            linked_snp_co_counts     = linked_snp_co_counts,
+            linked_snp_shared_depths = linked_snp_shared_depths
           )
 
           Temp <- cbind(Run_Info, Sample_Info, Assay_Info, Amplicon_Info, SNP_Info)
@@ -82,7 +187,10 @@ read.ASAP.snps.individual <- function(XML) {
   if (nrow(Out) > 0) {
     row.names(Out) <- 1:nrow(Out)
     num_cols <- c("Total_Reads", "Trimmed_Reads", "Mapped_Reads", "unassigned_reads",
-                  "unmapped_reads", "location_depth", "snp_position", "snp_depth", "snp_proportion")
+                  "unmapped_reads", "location_depth", "snp_position", "snp_depth", "snp_proportion",
+                  "snp_call_qual_mean", "snp_call_qual_median", "snp_call_qual_min", "snp_call_qual_max",
+                  "snp_ref_qual_mean", "snp_ref_qual_median", "snp_ref_qual_min", "snp_ref_qual_max",
+                  "snp_call_R1", "snp_call_R2", "snp_call_SE")
     num_cols <- intersect(num_cols, names(Out))
     Out[num_cols] <- lapply(Out[num_cols], function(x) as.numeric(as.character(x)))
   }

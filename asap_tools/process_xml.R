@@ -1,7 +1,9 @@
 #!/usr/bin/env Rscript
 
-library(tidyverse)
-library(xml2)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(xml2)
+})
 
 # Resolve path to local function files relative to this script
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
@@ -15,26 +17,27 @@ source(file.path(.functions_dir, "_ASAP.get.quality.discards.R"))
 
 # Capture arguments passed from Nextflow
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 3) {
-  stop("Usage: process_xml.R <xml_file> <min_snp> <sample_id>")
+if (length(args) < 4) {
+  stop("Usage: process_xml.R <xml_file> <min_snp> <sample_id> <run_name>")
 }
 
 # Assign the arguments to variables
 xml_file   <- args[1]
 min_snp    <- as.numeric(args[2])*100
 sample_id  <- args[3]
+run_name   <- args[4]
 
 
 # 1. Individual Processing
-ASAP <- read.ASAP.individual(xml_file)
-SNPS <- read.ASAP.snps.individual(xml_file)
+ASAP <- read.ASAP.individual(xml_file, run_name)
+SNPS <- read.ASAP.snps.individual(xml_file, run_name)
 
 # Define the columns that SHOULD be numeric
 asap_numeric_names <- c("total_reads", "trimmed_reads", "mapped_reads", "unassigned_reads", "unmapped_reads",
                         "amplicon_number", "amplicon_reads", "aligned_reads",
                         "primer_reads", "no_primer_reads",
                         "identity_input", "identity_discarded",
-                        "smor_input", "smor_pairs_dropped", "smor_consensus_reads",
+                        "smor_input", "smor_pairs_dropped", "smor_consensus_reads", "smor_singleton_reads",
                         "breadth", "avg_depth")
 snps_numeric_names <- c("Mapped_Reads", "unassigned_reads", "unmapped_reads",
                         "amplicon_number", "location_depth", "snp_position",

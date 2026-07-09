@@ -382,7 +382,7 @@ nextflow_pipeline {
                 asaptools_qc_plots              = true
                 asaptools_generate_fasta        = true
                 asaptools_snp_table             = true
-                asaptools_min_location_depth    = 499
+                depth                           = 499
                 asaptools_positions_of_interest = "${baseDir}/tests/Genes_Of_Interest/H37Rv_Genes_Of_Interst.csv"
             }
         }
@@ -618,7 +618,7 @@ nextflow_pipeline {
                 asaptools_generate_fasta        = true
                 asaptools_snp_table             = true
                 asaptools_genbank_location      = "${baseDir}/tests/preparejson/H37Rv_NC0009623.gb"
-                asaptools_min_location_depth    = 499
+                depth                           = 499
                 asaptools_positions_of_interest = "${baseDir}/tests/Genes_Of_Interest/H37Rv_Genes_Of_Interst.csv"
             }
         }

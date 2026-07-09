@@ -1,15 +1,20 @@
-ASAP.get.quality.discards <- function(read.ASAP.df, num_cores = 1) {
-  library(dplyr)
-  library(foreach)
-  library(doParallel)
+library(dplyr)
+library(foreach)
+library(doParallel)
 
-  cl <- makeCluster(num_cores)
-  registerDoParallel(cl)
+ASAP.get.quality.discards <- function(read.ASAP.df, num_cores = 1) {
+  if (num_cores > 1) {
+    cl <- makeCluster(num_cores)
+    registerDoParallel(cl)
+    on.exit(stopCluster(cl))
+  } else {
+    registerDoSEQ()
+  }
 
   quality_discards_out <- foreach(i = 1:nrow(read.ASAP.df), .combine = bind_rows) %dopar% {
-    run             <- read.ASAP.df$run[[i]]
-    name            <- read.ASAP.df$name[[i]]
-    assay_name      <- read.ASAP.df$assay_name[[i]]
+    run              <- read.ASAP.df$run[[i]]
+    name             <- read.ASAP.df$name[[i]]
+    assay_name       <- read.ASAP.df$assay_name[[i]]
     quality_discards <- read.ASAP.df$quality_discards[[i]]
 
     quality_discards <- as.numeric(unlist(strsplit(quality_discards, ",")))
@@ -17,8 +22,6 @@ ASAP.get.quality.discards <- function(read.ASAP.df, num_cores = 1) {
 
     data.frame(run, name, assay_name, position, quality_discards)
   }
-
-  stopCluster(cl)
 
   quality_discards_out$position         <- as.numeric(as.character(quality_discards_out$position))
   quality_discards_out$quality_discards <- as.numeric(as.character(quality_discards_out$quality_discards))

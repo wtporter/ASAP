@@ -16,7 +16,7 @@ include {
     PREPARE_ASAP_JSON; GENERATE_REFERENCE_FASTA; MASK_PRIMERS; IDENTITY_FILTER; SMOR; SMOR_CORRECTION;
     PROCESS_BAM; OUTPUT_COMBINER; FORMAT_OUTPUT
 } from './modules/asap'
-include { PROCESS_XML_R; PROCESS_COMBINE_RDATA; PROCESS_GENERATE_COV_TABLE; PROCESS_GENERATE_FASTA; PROCESS_GENERATE_SNP_TABLE; PROCESS_SNPS_TO_AMINOACIDS; PROCESS_QC_PLOTS} from './modules/asap_tools'
+include { GENERATE_PRIMER_BED; COMBINE_MASKED_READS_PER_PRIMER; PROCESS_XML_R; PROCESS_COMBINE_RDATA; PROCESS_GENERATE_COV_TABLE; PROCESS_GENERATE_FASTA; PROCESS_GENERATE_SNP_TABLE; PROCESS_SNPS_TO_AMINOACIDS; PROCESS_QC_PLOTS; PROCESS_SNP_PLOTS; PROCESS_FASTP_PANEL } from './modules/asap_tools'
 include { IVAR_TRIM } from './modules/ivar/trim/'
 include { IVAR_VARIANTS } from './modules/ivar/variants/'
 include { IVAR_CONSENSUS } from './modules/ivar/consensus/'
@@ -41,17 +41,31 @@ workflow {
     log.info paramsSummaryLog(workflow)
     
     // --- SETUP: Reference Generation --
-    // Collect all matches into a list
-    def input_refs = files(params.reference_input)
+    // Collect all matches into a list; handle directory path transparently.
+    // Avoid calling isDirectory() on glob results (file() returns a List for globs,
+    // which has no isDirectory() method and triggers "Missing process or function" errors).
+    def _ref_input = params.reference_input
+    def _has_glob = _ref_input.contains('*') || _ref_input.contains('?') || _ref_input.contains('{')
+    def input_refs
+    if (_has_glob) {
+        input_refs = files(_ref_input)
+    } else {
+        def _ref_path = file(_ref_input)
+        input_refs = _ref_path.isDirectory() ? _ref_path.listFiles().sort() : [_ref_path]
+    }
     if (input_refs.size() == 0) error "No reference files found matching: ${params.reference_input}"
 
     // Logic for GenBank detection (using the first file as a representative)
     def first_ref = input_refs[0]
-    def is_genbank = first_ref.name.endsWith('.gb') || first_ref.name.endsWith('.genbank') || first_ref.name.endsWith('.gbk')
+    def is_genbank = first_ref.name.endsWith('.gb') || first_ref.name.endsWith('.genbank') || first_ref.name.endsWith('.gbk') || first_ref.name.endsWith('.gbf') || first_ref.name.endsWith('.gbb') || first_ref.name.endsWith('.gbff')
     
     // This will be a list of paths if GenBank, or a single path otherwise
     def gb_file_to_use = is_genbank ? input_refs : (params.asaptools_genbank_location ? file(params.asaptools_genbank_location) : null)
-    
+
+    if (params.codon_correction && !gb_file_to_use) {
+        error "ERROR: --codon_correction requires a GenBank reference: provide --reference_input as GenBank file(s) (.gb/.gbf/.gbb/.gbk/.gbff/.genbank) or set --asaptools_genbank_location."
+    }
+
     if (first_ref.name.endsWith('.json')) {
         json_ch = Channel.value(first_ref)
     } else {
@@ -91,9 +105,9 @@ workflow {
     
     // --- STEP 1: FastQC Initial ---
     def ch_for_fastqc_initial = ch_raw_reads_for_pipeline
-        .map { meta, reads -> [ meta.clone() << [status: 'initial'], reads ] } 
-    
-    FASTQC_INITIAL(ch_for_fastqc_initial)
+        .map { meta, reads -> [ meta.clone() << [status: 'initial'], reads ] }
+
+    if (!params.skip_fastqc) FASTQC_INITIAL(ch_for_fastqc_initial)
 
     // --- STEP 2: Trimming Branch ---
     def ch_for_fastqc_post
@@ -128,8 +142,8 @@ workflow {
         error "Unknown technology: ${params.technology}. Valid: illumina, ont, pacbio"
     }
 
-    // --- STEP 3: Rerun Fastqc --- 
-    FASTQC_POST(ch_for_fastqc_post)
+    // --- STEP 3: Rerun Fastqc ---
+    if (!params.skip_fastqc) FASTQC_POST(ch_for_fastqc_post)
 
     // --- STEP 4: Align reads ---
     def ch_aligned_with_meta
@@ -183,11 +197,34 @@ workflow {
     def fastp_stats_by_id = ch_trim_json_for_multiqc.map { meta, json -> [ meta.id, json ] }
 
     // --- Optional STEP 5: Primer masking ---
-    def primer_bed_path = params.primer_file ? file(params.primer_file).toAbsolutePath() : null
+    // --primer_file accepts either a ready-made 6-column BED or a 3-column primer
+    // CSV (primer_name, direction, sequence). A .csv is auto-detected and converted
+    // to a BED by GENERATE_PRIMER_BED (primer search against the pipeline reference).
+    // effective_primer_bed_ch is a value channel reused by masking, iVar trim, and
+    // the SNP table (GENERATE_PRIMER_BED emits a value channel since its inputs are
+    // value channels).
     def null_file = file("${baseDir}/bin/null")
+    def effective_primer_bed_ch
+    if (params.primer_file && file(params.primer_file).name.toLowerCase().endsWith('.csv')) {
+        effective_primer_bed_ch =
+            GENERATE_PRIMER_BED(Channel.value(file(params.primer_file).toAbsolutePath()), ref_fasta).bed
+    } else if (params.primer_file) {
+        effective_primer_bed_ch = Channel.value(file(params.primer_file).toAbsolutePath())
+    } else {
+        effective_primer_bed_ch = Channel.value(null_file)
+    }
     if(params.mask_primers || (params.primer_file && params.mask_primers != false)) {
-        MASK_PRIMERS(aligned_bams.combine(Channel.value(primer_bed_path)))
+        MASK_PRIMERS(aligned_bams.combine(effective_primer_bed_ch))
         aligned_bams = MASK_PRIMERS.out.mask_primers_output
+
+        // Combined cross-sample report: masked reads per primer, pivoted WIDE so
+        // each column is a sample and each row is a (ref, primer, direction).
+        // Gather every per-sample long-format stats file and pivot in one step.
+        COMBINE_MASKED_READS_PER_PRIMER(
+            MASK_PRIMERS.out.mask_primers_primer_stats
+                .map { sample_id, stats -> stats }
+                .collect()
+        )
     }
     def primer_stats_by_id = (params.mask_primers || (params.primer_file && params.mask_primers != false))
         ? MASK_PRIMERS.out.mask_primers_stats.map { id, f -> [id, f] }
@@ -236,7 +273,7 @@ workflow {
             .join(primer_stats_by_id)
             .join(identity_stats_by_id)
             .join(smor_stats_by_id)
-        def xml_output = PROCESS_BAM(ch_bam_for_asap.combine(json_ch))
+        def xml_output = PROCESS_BAM(ch_bam_for_asap.combine(json_ch).combine(Channel.value(gb_file_to_use ?: null_file)))
         
         // --- ASAP Tools  R Processing ---
         if(params.asaptools_processing) {
@@ -251,23 +288,52 @@ workflow {
                 parallel_r_out.rdata.collect()
                 )
 
+            // Amino-acid conversion — shared by the SNP plots (tile coloring by
+            // effect) and the SNP table. Runs once when GenBank refs exist and a
+            // consumer is enabled; otherwise a null sentinel flows through.
+            def aa_data_ch
+            if (gb_file_to_use && (params.asaptools_snp_plots || params.asaptools_snp_table)) {
+                aa_data_ch = PROCESS_SNPS_TO_AMINOACIDS(
+                    combined_data.combined_rdata,
+                    gb_file_to_use
+                ).snp_to_amino_rdata
+            } else {
+                aa_data_ch = Channel.value(null_file)
+            }
+
             // 3. Optional Coverage Table
             if(params.asaptools_cov_table){
 
                 PROCESS_GENERATE_COV_TABLE(
                     combined_data.combined_rdata,
-                    params.asaptools_min_location_depth,
+                    params.depth,
                     params.file_name,
                     poi_input
                 )
             }
             
             if(params.asaptools_qc_plots){
-            
+
                 PROCESS_QC_PLOTS(
                     combined_data.combined_rdata,
                     params.file_name,
                     poi_input
+                )
+
+                PROCESS_FASTP_PANEL(
+                    ch_trim_json_for_multiqc.map { meta, json -> json }.collect(),
+                    params.file_name
+                )
+            }
+
+            if(params.asaptools_snp_plots){
+
+                PROCESS_SNP_PLOTS(
+                    combined_data.combined_rdata,
+                    params.file_name,
+                    poi_input,
+                    aa_data_ch,
+                    gb_file_to_use ?: []
                 )
             }
 
@@ -284,20 +350,12 @@ workflow {
                 // If no GB files, pass an empty list []
                 def gb_files_ch = gb_file_to_use ?: []
 
-                // 2. Handle Amino Acid Data (Optional)
-                // Only run AA conversion if GB files exist
-                def aa_data_ch
-                if (gb_file_to_use) {
-                    aa_data_ch = PROCESS_SNPS_TO_AMINOACIDS(
-                        combined_data.combined_rdata,
-                        gb_file_to_use
-                    ).snp_to_amino_rdata
-                } else {
-                    aa_data_ch = Channel.value(file("${baseDir}/bin/null"))
-                }
+                // 2. Amino Acid Data — reuse the shared aa_data_ch computed above
+                //    (single PROCESS_SNPS_TO_AMINOACIDS run for plots + table).
 
                 // 3. Handle Primer BED (Optional)
-                def primer_bed_ch = params.primer_file ? file(params.primer_file) : file("${baseDir}/bin/null")
+                // Reuse the effective BED (generated from CSV, or the supplied BED, or null_file)
+                def primer_bed_ch = effective_primer_bed_ch
 
                 // 4. Run the SNP Table Process
                 // This now runs regardless of whether GB files exist
@@ -328,7 +386,7 @@ workflow {
     // --- STEP 10: iVAR Trimming ---
     def ch_bam_for_ivar
     if (params.ivar || params.ivar_trim) {
-        IVAR_TRIM (ch_split.ivar, primer_bed_path)
+        IVAR_TRIM (ch_split.ivar, effective_primer_bed_ch)
         ch_bam_for_ivar = IVAR_TRIM.out.bam
     } else {
         ch_bam_for_ivar = ch_split.ivar.map { meta, bam, bai -> [meta, bam] }
@@ -339,13 +397,18 @@ workflow {
     if (params.ivar || params.ivar_consensus) { IVAR_CONSENSUS (ch_bam_for_ivar, ref_fasta, true) }
 
     // --- STEP 13: MultiQC ---
-    MULTIQC (
-        FASTQC_INITIAL.out.zip.map{ it[1] }.mix(FASTQC_POST.out.zip.map{ it[1] })
-            .mix(ch_trim_json_for_multiqc.map{ it[1] })
+    if (!params.skip_multiqc) {
+        // FASTQC zips are only available when FastQC ran; always include fastp
+        // JSON and alignment flagstats.
+        def ch_multiqc_files = ch_trim_json_for_multiqc.map{ it[1] }
             .mix(ch_flagstats.map{ it[1] })
-            .collect(),
-        [], [], [], [], []
-    )
+        if (!params.skip_fastqc) {
+            ch_multiqc_files = FASTQC_INITIAL.out.zip.map{ it[1] }
+                .mix(FASTQC_POST.out.zip.map{ it[1] })
+                .mix(ch_multiqc_files)
+        }
+        MULTIQC ( ch_multiqc_files.collect(), [], [], [], [], [] )
+    }
 }
 
 // Sub-workflows

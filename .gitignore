@@ -21,3 +21,8 @@ nextflow/tests/test_output/
 
 # Generated comparison reports
 ASAP_public_vs_upstream_comparison.*
+
+# Committed-by-accident run artifacts
+*.log
+slurm-*.out
+nextflow/slurm-*.out

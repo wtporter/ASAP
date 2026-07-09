@@ -14,5 +14,8 @@ dependencies:
   - conda-forge::r-htmlwidgets
   - conda-forge::r-openxlsx
   - conda-forge::r-zoo
+  - conda-forge::r-jsonlite
+  - conda-forge::r-patchwork
   - bioconda::bioconductor-biostrings
   - bioconda::bioconductor-genbankr
+  - conda-forge::r-testthat
