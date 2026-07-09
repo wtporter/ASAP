@@ -106,11 +106,14 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
 
             no_primer = 0
             primer_found = 0
+            removed = 0   # reads dropped from the output BAM (only happens with --primer-only)
             for read in samdata.fetch(chrom, until_eof=True):
                 # TP ADDED TO FIX TYPE ERROR THAT SEEMS TO ARISE WITH LONG READ DATA
                 if read.query_sequence is None or read.query_qualities is None:
                     if not ponlybam:
                         outdata.write(read)
+                    else:
+                        removed += 1
                     out.write(f'{chrom}\t{read.query_name}\tSkipped\tMissing_Data\tNone\n')
                     continue
                 ###############################
@@ -121,6 +124,8 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
                     no_primer += 1
                     if not ponlybam:
                         outdata.write(read)
+                    else:
+                        removed += 1
                     out.write(f'{chrom}\t{read.query_name}\tNone\t\t{read.query_sequence}\n')
                     continue
 
@@ -184,8 +189,10 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
 
                 if not ponlybam or primer_masked:
                     outdata.write(read)
+                else:
+                    removed += 1
 
-            primer_stats.append([chrom, primer_found, no_primer])
+            primer_stats.append([chrom, primer_found, no_primer, removed])
         else:
             logging.info("No primers found for: %s" % chrom)
             for read in samdata.fetch(chrom, until_eof=True):
@@ -196,7 +203,7 @@ def _primer_mask(samdata, primer_file, wiggle, mask_bases, ponlybam, outfile):
     outdata.close()
     samdata.close()
     with open("primer_masking_stats.tsv", "w") as stats_out:
-        stats_out.write("ref_name\tprimer_reads\tno_primer_reads\n")
+        stats_out.write("ref_name\tprimer_reads\tno_primer_reads\tremoved_reads\n")
         for row in primer_stats:
             stats_out.write("\t".join(str(x) for x in row) + "\n")
     # Per-primer, per-reference masked-read counts (includes primers that masked

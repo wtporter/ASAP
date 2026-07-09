@@ -891,6 +891,9 @@ USAGE
                 if ref_name in primer_stats:
                     amplicon_dict['primer_reads']    = primer_stats[ref_name]['primer_reads']
                     amplicon_dict['no_primer_reads'] = primer_stats[ref_name]['no_primer_reads']
+                    # reads actually dropped by primer masking (non-zero only with
+                    # --primer-only); .get() keeps older primer-stats files working
+                    amplicon_dict['primer_removed_reads'] = primer_stats[ref_name].get('removed_reads', '0')
                 if ref_name in identity_stats:
                     amplicon_dict['identity_input']     = identity_stats[ref_name]['input_reads']
                     amplicon_dict['identity_discarded'] = identity_stats[ref_name]['discarded_reads']

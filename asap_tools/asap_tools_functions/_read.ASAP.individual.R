@@ -49,6 +49,7 @@ read.ASAP.individual <- function(XML, run_name = "Individual_XML_processing") {
         aligned_reads        = xml_attr(Amplicon_Node, "aligned_reads"),
         primer_reads         = xml_attr(Amplicon_Node, "primer_reads"),
         no_primer_reads      = xml_attr(Amplicon_Node, "no_primer_reads"),
+        primer_removed_reads = xml_attr(Amplicon_Node, "primer_removed_reads"),
         identity_input       = xml_attr(Amplicon_Node, "identity_input"),
         identity_discarded   = xml_attr(Amplicon_Node, "identity_discarded"),
         smor_input           = xml_attr(Amplicon_Node, "smor_input"),

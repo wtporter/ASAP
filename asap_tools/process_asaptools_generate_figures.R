@@ -297,37 +297,43 @@ safe_plot("Alignment Summary", {
 
 # --- Plot 5: Read Funnel (counts + percentage panels) ---
 safe_plot("Read Funnel", {
-  # NOTE: no_primer_reads is intentionally NOT a loss category. With
-  # primer_only=false (the default), reads where no primer was detected are only
-  # primer-masked (bases -> N); they still flow through to amplicon_reads. The
-  # true conservation is aligned_reads = amplicon_reads + identity_discarded +
-  # smor_pairs_dropped + residual, so counting no_primer_reads here would
-  # double-count them (once as "lost", once inside Final Reads). SMOR columns are
-  # NA when SMOR is off, so coalesce to 0 to keep the arithmetic well-defined.
+  # "Lost: No Primer" uses primer_removed_reads = reads ACTUALLY dropped by primer
+  # masking (non-zero only with --primer_only true). It is NOT no_primer_reads:
+  # with primer_only=false, no-primer reads are merely primer-masked (bases -> N)
+  # and still flow through to amplicon_reads, so counting them would double-count
+  # (once as "lost", once inside Final Reads). aligned_reads is the pre-mask
+  # aligned count (from --original-bam), so it already includes any removed reads;
+  # subtract them here. Column is absent in RData from older runs -> treat as 0.
+  # SMOR columns are NA when SMOR is off, so coalesce to 0 throughout.
+  if (!"primer_removed_reads" %in% names(final_asap)) final_asap$primer_removed_reads <- 0
+
   funnel_data <- final_asap %>%
     select(name, name_short, assay_name,
-           aligned_reads,
+           aligned_reads, primer_removed_reads,
            identity_discarded,
            smor_pairs_dropped,
            amplicon_reads) %>%
     mutate(
-      across(c(aligned_reads, identity_discarded,
+      across(c(aligned_reads, primer_removed_reads, identity_discarded,
                smor_pairs_dropped, amplicon_reads), as.numeric),
+      lost_primer   = coalesce(primer_removed_reads, 0),
       lost_identity = coalesce(identity_discarded, 0),
       lost_smor     = coalesce(smor_pairs_dropped, 0),
       kept          = coalesce(amplicon_reads, 0),
-      lost_other    = pmax(0, coalesce(aligned_reads, 0) - kept - lost_smor - lost_identity)
+      lost_other    = pmax(0, coalesce(aligned_reads, 0) - kept - lost_smor - lost_identity - lost_primer)
     )
 
-  fate_levels  <- c("Lost: Identity Filter", "Lost: SMOR",
+  fate_levels  <- c("Lost: No Primer", "Lost: Identity Filter", "Lost: SMOR",
                     "Lost: Other", "Final Reads")
-  fate_colours <- c("Lost: Identity Filter"   = "#e67e22",
+  fate_colours <- c("Lost: No Primer"         = "#e74c3c",
+                    "Lost: Identity Filter"   = "#e67e22",
                     "Lost: SMOR"              = "#f1c40f",
                     "Lost: Other"             = "#95a5a6",
                     "Final Reads"             = "#2ecc71")
 
   funnel_long <- funnel_data %>%
     select(name, name_short, assay_name,
+           "Lost: No Primer"       = lost_primer,
            "Lost: Identity Filter" = lost_identity,
            "Lost: SMOR"            = lost_smor,
            "Lost: Other"           = lost_other,
@@ -383,7 +389,7 @@ safe_plot("Read Funnel", {
     caption    = wrap_cap(paste(
       "(A) Read counts per amplicon per sample stacked by filtering fate. Bar height = total reads aligned to the amplicon.",
       "(B) Same data as percentage of aligned reads per amplicon.",
-      "Categories — Lost:Identity: read pair did not meet percent-identity threshold; Lost:SMOR: duplicate pair removed by SMOR deduplication; Lost:Other: aligned reads not accounted for by the above filters; Final Reads: reads passing all filters and counted as amplicon_reads. Reads with no detected primer are primer-masked but still retained (they pass through to Final Reads), so they are not shown as a loss.",
+      "Categories — Lost:No Primer: reads dropped by primer masking (only when --primer-only is set; reads that are merely primer-masked but retained are NOT counted here); Lost:Identity: read pair did not meet percent-identity threshold; Lost:SMOR: duplicate pair removed by SMOR deduplication; Lost:Other: aligned reads not accounted for by the above filters; Final Reads: reads passing all filters and counted as amplicon_reads.",
       sep = "\n"
     ), w = 120),
     theme = theme(
