@@ -23,7 +23,7 @@ documents the architecture and per-sample output schema.
   calls on eukaryotic references (validated on a real fungal PMA1 gene) while
   staying byte-for-byte identical on single-exon viral references.
 - **Pair-aware identity filtering** and **configurable SMOR consensus** in the
-  core BAM processing chain; new `fasterBamProcessor.py`.
+  core BAM processing chain.
 - **Expanded, self-sizing figures** — new SNP genome-track / prevalence / density
   / strand / quality panels, a fastp QC panel, automatic figure sizing, and a
   corrected read-fate funnel.
@@ -41,7 +41,7 @@ documents the architecture and per-sample output schema.
 | **GenBank CDS parsing** | New `genbank_cds.py` — CDS/allele-linkage logic extracted to a dedicated, testable module. |
 | **Identity filtering** | `identityFilter.py`: pair-aware percent-identity filtering. Params: `filter_pairs`, `qual_diff_threshold`. |
 | **SMOR consensus** | `generateSMORbam*.py`: configurable consensus-correction quality threshold. |
-| **BAM processing** | New `fasterBamProcessor.py` (performance-oriented); `newBamProcessor.py` reworked to emit the richer per-amplicon funnel + SNP metrics. |
+| **BAM processing** | `newBamProcessor.py` reworked to emit the richer per-amplicon funnel + SNP metrics. `fasterBamProcessor.py` is an **experimental, unintegrated** performance rewrite — committed for reference only; it is not wired into the pipeline (nothing imports or invokes it) because it was not reliably faster. `newBamProcessor.py` remains the active processor. |
 | **SNP metrics** | Per-base quality stats (mean/median/min/max) and read-strand distribution (R1/R2/SE) now in the XML and parsed downstream. |
 | **ROI discovery** | Optional read-level variant / region-of-interest discovery. Params: `discover_roi`, `discover_roi_min_perc`, `discover_roi_min_reads`, `discover_roi_min_snp_perc`. |
 | **Primer masking** | `maskPrimers.py`: now also emits an explicit **`removed_reads`** column (reads actually dropped — non-zero only with `--primer-only`), so read-loss is tracked, not inferred. |
