@@ -335,11 +335,15 @@ This is especially valuable for:
 - **Resistance gene specificity** — ensuring only reads from the precise target gene
   are used for resistance calling, preventing false calls from paralogs or related genes.
 
-+----------------+----------+-------------------------------------------------------------+
-| Parameter      | Default  | Description                                                 |
-+================+==========+=============================================================+
-| ``--identity`` | ``null`` | Minimum fractional identity threshold (e.g. ``0.97`` = 97%) |
-+----------------+----------+-------------------------------------------------------------+
++--------------------+----------+-------------------------------------------------------------+
+| Parameter          | Default  | Description                                                 |
++====================+==========+=============================================================+
+| ``--identity``     | ``null`` | Minimum fractional identity threshold (e.g. ``0.97`` = 97%) |
++--------------------+----------+-------------------------------------------------------------+
+| ``--filter_pairs`` | ``true`` | If either mate of a read pair fails the identity check on a |
+|                    |          | checked reference, discard both mates. Set to ``false`` to  |
+|                    |          | filter each mate independently.                             |
++--------------------+----------+-------------------------------------------------------------+
 
 Step 5 — SMOR Processing *(optional)*
 --------------------------------------
@@ -540,9 +544,9 @@ figures, and FASTA files. Processing follows a fan-out / gather pattern:
    PROCESS_COMBINE_RDATA (gather all)             →  sample_reports/rdata/ (Rdata)
          │                                           sample_reports/general_reports/ (CSV)
          ├── PROCESS_GENERATE_COV_TABLE           →  sample_reports/general_reports/ (Excel)
-         ├── PROCESS_QC_PLOTS                     →  sample_reports/plots/ (HTML + JPG)
-         ├── PROCESS_FASTP_PANEL                  →  sample_reports/plots/ (HTML + JPG)
-         ├── PROCESS_SNP_PLOTS                    →  sample_reports/plots/ (HTML + JPG)
+         ├── PROCESS_QC_PLOTS                     →  sample_reports/plots/ (JPG, +HTML if enabled)
+         ├── PROCESS_FASTP_PANEL                  →  sample_reports/plots/ (JPG, +HTML if enabled)
+         ├── PROCESS_SNP_PLOTS                    →  sample_reports/plots/ (JPG, +HTML if enabled)
          ├── PROCESS_GENERATE_FASTA               →  sample_reports/fasta/ (FASTA)
          ├── PROCESS_SNPS_TO_AMINOACIDS           →  sample_reports/rdata/ (Rdata)
          │                                           sample_reports/snp_reports/ (CSV)
@@ -565,13 +569,16 @@ figures, and FASTA files. Processing follows a fan-out / gather pattern:
 +---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
 | ``--asaptools_snp_table_xls``         | ``false`` | Also export SNP table as Excel                                                                                             |
 +---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
+| ``--asaptools_interactive_plots``     | ``false`` | Also export the self-contained interactive HTML widgets for the QC and SNP figures. JPGs are always produced; the HTML     |
+|                                       |           | widgets are expensive to render, so they are off by default.                                                               |
++---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
 | ``--asaptools_positions_of_interest`` | ``null``  | CSV of genomic positions to annotate in outputs                                                                            |
 +---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
 | ``--asaptools_genbank_location``      | ``null``  | GenBank file for amino acid annotation                                                                                     |
 +---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
 | ``--asaptools_snp_proportion``        | ``null``  | Override allele frequency threshold for SNP table                                                                          |
 +---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
-| ``--asaptools_max_sample_snp_count``  | ``50``    | Max SNPs per sample before flagging as noisy                                                                               |
+| ``--asaptools_max_sample_snp_count``  | ``10000`` | Max SNPs per sample before flagging as noisy                                                                               |
 +---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
 | ``--asaptools_samples_to_remove``     | ``null``  | Sample IDs to exclude from combined outputs                                                                                |
 +---------------------------------------+-----------+----------------------------------------------------------------------------------------------------------------------------+
@@ -588,8 +595,9 @@ average depth, aligned reads, and depth at positions of interest. Depth threshol
 positions without adequate coverage, distinguishing true absence of SNPs from
 insufficient data.
 
-**QC Figures** — interactive HTML plots and static JPG figures produced by three
-independent, individually toggleable steps, all published to ``sample_reports/plots/``:
+**QC Figures** — static JPG figures (and, when ``--asaptools_interactive_plots true``,
+self-contained interactive HTML versions) produced by three independent, individually
+toggleable steps, all published to ``sample_reports/plots/``:
 
 - *QC Plots* (``--asaptools_qc_plots``) — reference depth of coverage, percent masked
   bases ("N"s), a per-sample/per-amplicon breadth-of-coverage heatmap, an alignment
@@ -645,6 +653,12 @@ transient resource limits from aborting runs.
 ``PROCESS_SNPS_TO_AMINOACIDS`` (default 30 GB) are the most memory-intensive steps,
 as they load all per-sample Rdata objects simultaneously. For large runs (100+ samples),
 ensure sufficient memory is available on the target SLURM partition.
+
+**Shared environment cache (``--env_dir``):** By default Conda/Singularity environments
+are cached under Nextflow's working directory. Set ``--env_dir <path>`` to redirect the
+caches to ``<path>/conda`` and ``<path>/singularity`` — point multiple runs (or all users
+on a cluster) at one shared location to build each environment once and reuse it, rather
+than rebuilding per run. Unset leaves Nextflow's default behavior unchanged.
 
 **SMOR and identity filtering:** These steps add computational overhead but substantially
 improve variant call quality. For routine screening, they can be omitted; for
