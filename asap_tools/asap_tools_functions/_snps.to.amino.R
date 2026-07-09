@@ -10,15 +10,38 @@ library(parallelly)
 # a single-row data.frame. No file I/O; directly unit-testable.
 # ---------------------------------------------------------------------------
 
+# Genomic -> spliced-CDS position. With `exons` (data.frame start/end, ascending)
+# introns are excised via genomic_to_spliced_pos() (returns NA for intronic
+# positions); without it, falls back to the contiguous single-exon mapping.
+.snp_in_gene_pos <- function(position_vec, gene_start, exons = NULL) {
+  if (is.null(exons)) return((position_vec - gene_start) + 1L)
+  vapply(position_vec, genomic_to_spliced_pos, integer(1), exons = exons)
+}
+
+# Standard single-row result flagging a SNP as not in a coding exon.
+.noncoding_row <- function(genome_snp, position_vec, gene_name, gene_product) {
+  data.frame(
+    SNP                   = as.character(genome_snp),
+    snp_position_genome   = paste(position_vec, collapse = "|"),
+    snp_position_gene     = NA_character_,
+    Theoretical_Reference = NA_character_,
+    Gene                  = as.character(gene_name),
+    Product               = as.character(gene_product),
+    AA                    = "Non-coding",
+    SNP_Gene              = NA_character_,
+    stringsAsFactors      = FALSE
+  )
+}
+
 .translate_snp <- function(position_vec, mutation_vec, genome_snp,
                             gene_seq, gene_start, gene_end, gene_strand,
-                            gene_name, gene_product) {
+                            gene_name, gene_product, exons = NULL) {
   n_comp       <- length(position_vec)
   gene_seq_dna <- Biostrings::DNAString(gene_seq)
-  snp_in_gene  <- (position_vec - gene_start) + 1
+  snp_in_gene  <- .snp_in_gene_pos(position_vec, gene_start, exons)
 
   gene_len <- nchar(gene_seq)
-  if (any(snp_in_gene < 1L) || any(snp_in_gene > gene_len)) {
+  if (any(is.na(snp_in_gene)) || any(snp_in_gene < 1L) || any(snp_in_gene > gene_len)) {
     return(data.frame(
       SNP                   = as.character(genome_snp),
       snp_position_genome   = paste(position_vec, collapse = "|"),
@@ -47,7 +70,8 @@ library(parallelly)
       ref_bases[i] <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_bases[i])))
       mut_out[i]   <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(mutation_vec[i])))
     }
-    snp_in_gene <- (gene_end - position_vec) + 1
+    # reflect the spliced-CDS position onto the coding (reverse-complemented) strand
+    snp_in_gene <- (gene_len - snp_in_gene) + 1
   }
 
   aa_ref <- Biostrings::translate(gene_seq_dna, if.fuzzy.codon = "solve")
@@ -75,15 +99,18 @@ library(parallelly)
 
 .translate_insertion <- function(position, mutation, genome_snp,
                                   gene_seq, gene_start, gene_end, gene_strand,
-                                  gene_name, gene_product) {
-  snp_in_gene  <- (position - gene_start) + 1
+                                  gene_name, gene_product, exons = NULL) {
+  snp_in_gene  <- .snp_in_gene_pos(position, gene_start, exons)
+  gene_len     <- nchar(gene_seq)
+  if (is.na(snp_in_gene))
+    return(.noncoding_row(genome_snp, position, gene_name, gene_product))
   ref_gene_str <- gene_seq
   mut_out      <- mutation
   theo_ref     <- substr(ref_gene_str, snp_in_gene, snp_in_gene)
 
   if (gene_strand == "-") {
     ref_gene_str <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_gene_str)))
-    snp_in_gene  <- (gene_end - position) + 1
+    snp_in_gene  <- (gene_len - snp_in_gene) + 1
     mut_out      <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(mutation)))
     theo_ref     <- substr(ref_gene_str, snp_in_gene, snp_in_gene)
   }
@@ -124,15 +151,18 @@ library(parallelly)
 
 .translate_deletion <- function(position_vec, genome_snp,
                                  gene_seq, gene_start, gene_end, gene_strand,
-                                 gene_name, gene_product) {
+                                 gene_name, gene_product, exons = NULL) {
   n_comp       <- length(position_vec)
-  snp_in_gene  <- (position_vec - gene_start) + 1
+  snp_in_gene  <- .snp_in_gene_pos(position_vec, gene_start, exons)
+  gene_len     <- nchar(gene_seq)
+  if (any(is.na(snp_in_gene)))
+    return(.noncoding_row(genome_snp, position_vec, gene_name, gene_product))
   ref_gene_str <- gene_seq
   theo_refs    <- sapply(snp_in_gene, function(p) substr(ref_gene_str, p, p))
 
   if (gene_strand == "-") {
     ref_gene_str <- as.character(Biostrings::reverseComplement(Biostrings::DNAString(ref_gene_str)))
-    snp_in_gene  <- sort((gene_end - position_vec) + 1)
+    snp_in_gene  <- sort((gene_len - snp_in_gene) + 1)
     theo_refs    <- sapply(snp_in_gene, function(p) substr(ref_gene_str, p, p))
   }
 
@@ -167,9 +197,11 @@ library(parallelly)
 # Main orchestrator
 # ---------------------------------------------------------------------------
 
-snps.to.amino <- function(snp_db, ref_seq, cores = NULL) {
-  reference    <- suppressWarnings(genbankr::readGenBank(ref_seq))
-  Reference_DF <- extract_gene_table(reference)
+snps.to.amino <- function(snp_db, ref_seq, cores = NULL, ref_df = NULL) {
+  # ref_df: a pre-built extract_gene_table() result, so callers processing many
+  # contigs can parse each GenBank record once instead of re-reading per helper.
+  Reference_DF <- if (is.null(ref_df))
+    extract_gene_table(suppressWarnings(genbankr::readGenBank(ref_seq))) else ref_df
 
   # SNP strings are 1 or 2 "<ref><pos><mut>" tokens, pipe-joined for
   # codon-merge combo rows (e.g. "T5118A|T5119A"); parse each token
@@ -206,7 +238,8 @@ snps.to.amino <- function(snp_db, ref_seq, cores = NULL) {
   }
 
   Temp <- foreach(SNP = 1:nrow(Amino_Acid_List), .combine = rbind,
-                  .export  = c(".translate_snp", ".translate_insertion", ".translate_deletion"),
+                  .export  = c(".translate_snp", ".translate_insertion", ".translate_deletion",
+                               ".snp_in_gene_pos", ".noncoding_row", "genomic_to_spliced_pos"),
                   .packages = c("dplyr", "Biostrings")) %dopar% {
 
     GENOME_SNP   <- Amino_Acid_List$SNP[SNP]
@@ -228,7 +261,8 @@ snps.to.amino <- function(snp_db, ref_seq, cores = NULL) {
             POSITION_vec, MUTATION_vec, GENOME_SNP,
             Reference_DF$sequence[GENE], Reference_DF$start[GENE],
             Reference_DF$end[GENE],      Reference_DF$strand[GENE],
-            Reference_DF$gene[GENE],     Reference_DF$product[GENE]
+            Reference_DF$gene[GENE],     Reference_DF$product[GENE],
+            exons = Reference_DF$exons[[GENE]]
           ))
         }
       }
@@ -239,7 +273,8 @@ snps.to.amino <- function(snp_db, ref_seq, cores = NULL) {
             POSITION_vec[1], MUTATION_vec[1], GENOME_SNP,
             Reference_DF$sequence[GENE], Reference_DF$start[GENE],
             Reference_DF$end[GENE],      Reference_DF$strand[GENE],
-            Reference_DF$gene[GENE],     Reference_DF$product[GENE]
+            Reference_DF$gene[GENE],     Reference_DF$product[GENE],
+            exons = Reference_DF$exons[[GENE]]
           ))
         }
       }
@@ -250,7 +285,8 @@ snps.to.amino <- function(snp_db, ref_seq, cores = NULL) {
             POSITION_vec, GENOME_SNP,
             Reference_DF$sequence[GENE], Reference_DF$start[GENE],
             Reference_DF$end[GENE],      Reference_DF$strand[GENE],
-            Reference_DF$gene[GENE],     Reference_DF$product[GENE]
+            Reference_DF$gene[GENE],     Reference_DF$product[GENE],
+            exons = Reference_DF$exons[[GENE]]
           ))
         }
       }
@@ -258,7 +294,16 @@ snps.to.amino <- function(snp_db, ref_seq, cores = NULL) {
     Out
   }
 
-  Out <- full_join(Amino_Acid_List, Temp)
+  # foreach returns an empty frame when NO SNP overlaps any gene; full_join()
+  # would then abort with "`by` must be supplied". Handle the empty case so an
+  # all-intergenic/all-intronic batch is labelled non-coding instead of crashing.
+  if (is.null(Temp) || nrow(Temp) == 0L) {
+    Out <- Amino_Acid_List
+    for (col in c("SNP_Gene", "AA", "Gene", "Product", "Theoretical_Reference"))
+      Out[[col]] <- NA_character_
+  } else {
+    Out <- full_join(Amino_Acid_List, Temp, by = "SNP")
+  }
 
   Out$snp_mutation <- as.character(unlist(Out$snp_mutation))
   mut_components <- str_split(Out$snp_mutation, "\\|")

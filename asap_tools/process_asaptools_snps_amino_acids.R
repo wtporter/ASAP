@@ -15,6 +15,7 @@ source(file.path(.functions_dir, "_extract_gene_table.R"))
 source(file.path(.functions_dir, "_genome.snp.to.gene.snp.R"))
 source(file.path(.functions_dir, "_snps.to.amino.R"))
 source(file.path(.functions_dir, "_expand_codon_merges.R"))
+source(file.path(.functions_dir, "_split_genbank_records.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -33,7 +34,7 @@ GENBANK_FILES <- c()
 for (path in raw_refs) {
   if (dir.exists(path)) {
     # If the arg is a directory, get all files inside
-    GENBANK_FILES <- c(GENBANK_FILES, list.files(path, full.names = TRUE, pattern = "\\.(gb|gbk|genbank)$"))
+    GENBANK_FILES <- c(GENBANK_FILES, list.files(path, full.names = TRUE, pattern = "\\.(gb|gbk|gbf|gbff|genbank)$"))
   } else if (file.exists(path)) {
     # If it's a direct file path
     GENBANK_FILES <- c(GENBANK_FILES, path)
@@ -84,52 +85,58 @@ all_amino_acids <- list()
 all_gene_snps <- list()
 
 for (REFERENCE in GENBANK_FILES) {
-  # Read the specific reference
-  reference_obj <- suppressWarnings(genbankr::readGenBank(REFERENCE))
-
-  acc_id <- reference_obj@accession
-
   file_base <- tools::file_path_sans_ext(basename(REFERENCE))
 
-  message(paste0("Processing: ", REFERENCE, " (ID: ", acc_id, " | FileBase: ", file_base, ")"))
+  # Split into per-LOCUS records. genbankr::readGenBank() cannot read a
+  # multi-record (multi-contig) file at all, so we never hand it the whole
+  # reference; single-contig files simply yield one record.
+  records <- tryCatch(split_genbank_records(REFERENCE), error = function(e) {
+    message(sprintf("[WARN] Could not split %s: %s", REFERENCE, conditionMessage(e)))
+    NULL
+  })
+  if (is.null(records)) next
 
-  # Filter SNPs belonging to this specific accession/assay
-  SNPS_To_AA <- SNPS %>%
-    filter(grepl(acc_id, assay_name) | grepl(file_base, assay_name)) %>%
-    select(SNP, assay_name) %>%
-    distinct()
+  for (r in seq_len(nrow(records))) {
+    locus    <- records$locus[r]
+    rec_path <- records$path[r]
+    # ASAP names each assay "<filebase>_<LOCUS>" (prepareJSONInput_nextflow.py),
+    # so this is the exact key linking SNPs to the contig they were called on.
+    assay_token <- paste0(file_base, "_", locus)
 
-  if (nrow(SNPS_To_AA) == 0) {
-    message(paste("No SNPs found for accession:", acc_id))
-    message(paste("If this is unexpected check SNP assay name."))
-    message(paste0("Filtering was conducted with: ", acc_id, " | FileBase: ", file_base, ")"))
-    next
+    SNPS_To_AA <- SNPS %>%
+      filter(assay_name == assay_token) %>%
+      select(SNP, assay_name) %>%
+      distinct()
+
+    # Only SNP-bearing contigs are parsed — critical for whole-genome refs where
+    # most contigs carry no calls (e.g. one contig of a 4-contig fungal genome).
+    if (nrow(SNPS_To_AA) == 0) {
+      message(sprintf("No SNPs for assay %s; skipping (contig not parsed).", assay_token))
+      next
+    }
+
+    message(sprintf("Processing %s (contig %s): %d SNPs", basename(REFERENCE), locus, nrow(SNPS_To_AA)))
+
+    # Parse this contig once and share the gene table across both conversions.
+    ref_df <- extract_gene_table(suppressWarnings(genbankr::readGenBank(rec_path)))
+
+    gene_snps_sub <- suppressWarnings(genome.snp.to.gene.snp(
+      snp_db = SNPS_To_AA, ref_seq = rec_path,
+      cores = parallelly::availableCores(), ref_df = ref_df
+    )) %>%
+      left_join(select(SNPS_To_AA, SNP, assay_name), by = "SNP")
+
+    amino_acids_sub <- suppressWarnings(snps.to.amino(
+      snp_db = SNPS_To_AA, ref_seq = rec_path,
+      cores = parallelly::availableCores(), ref_df = ref_df
+    )) %>%
+      left_join(select(SNPS_To_AA, SNP, assay_name), by = "SNP")
+
+    all_gene_snps[[assay_token]]   <- gene_snps_sub
+    all_amino_acids[[assay_token]] <- amino_acids_sub
+
+    message(sprintf("Success: %s", assay_token))
   }
-
-  message(paste0("Processing Gene SNPS: ", REFERENCE, " (ID: ", acc_id, " | FileBase: ", file_base, ")"))
-
-  # Convert SNP to Gene SNP using the specific reference
-  gene_snps_sub <- suppressWarnings(genome.snp.to.gene.snp(
-    snp_db = SNPS_To_AA,
-    ref_seq = REFERENCE,
-    cores = parallelly::availableCores()
-  )) %>%
-    left_join(select(SNPS_To_AA, SNP, assay_name), by = "SNP")
-
-  message(paste0("Processing Amino Acids: ", REFERENCE, " (ID: ", acc_id, " | FileBase: ", file_base, ")"))
-
-  # Convert SNP to amino acid using the specific reference
-  amino_acids_sub <- suppressWarnings(snps.to.amino(
-    snp_db = SNPS_To_AA,
-    ref_seq = REFERENCE,
-    cores = parallelly::availableCores()
-  )) %>%
-    left_join(select(SNPS_To_AA, SNP, assay_name), by = "SNP")
-
-  all_gene_snps[[acc_id]] <- gene_snps_sub
-  all_amino_acids[[acc_id]] <- amino_acids_sub
-
-  message(paste0("Success processing: ", REFERENCE, " (ID: ", acc_id, " | FileBase: ", file_base, ")"))
 }
 
 # Combine results

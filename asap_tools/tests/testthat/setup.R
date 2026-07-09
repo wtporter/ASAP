@@ -9,7 +9,7 @@ library(Biostrings)
 
 for (f in c("_extract_gene_table.R", "_shorten_sample_names.R", "_snps.to.amino.R", "_genome.snp.to.gene.snp.R", "_expand_codon_merges.R",
             "_read.ASAP.individual.R", "_read.ASAP.snps.individual.R",
-            "_parse_snp_distribution.R")) {
+            "_parse_snp_distribution.R", "_split_genbank_records.R")) {
   source(file.path(.functions_dir, f))
 }
 

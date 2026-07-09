@@ -5,9 +5,11 @@ library(foreach)
 library(doParallel)
 library(parallelly)
 
-genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = NULL) {
-  reference    <- suppressWarnings(genbankr::readGenBank(ref_seq))
-  Reference_DF <- extract_gene_table(reference)
+genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = NULL, ref_df = NULL) {
+  # ref_df: a pre-built extract_gene_table() result, so callers processing many
+  # contigs can parse each GenBank record once instead of re-reading per helper.
+  Reference_DF <- if (is.null(ref_df))
+    extract_gene_table(suppressWarnings(genbankr::readGenBank(ref_seq))) else ref_df
 
   SNP_List <- snp_db
 
@@ -36,6 +38,7 @@ genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = NULL) {
   }
 
   Temp <- foreach(SNP = 1:nrow(SNP_List), .combine = rbind,
+                  .export = "genomic_to_spliced_pos",
                   .packages = c("dplyr", "Biostrings")) %dopar% {
 
     GENOME_SNP <- SNP_List$SNP[SNP]
@@ -51,7 +54,11 @@ genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = NULL) {
       if (all(POSITION_vec >= Reference_DF$start[GENE] & POSITION_vec <= Reference_DF$end[GENE])) {
 
         Reference_Seq   <- Biostrings::DNAString(Reference_DF$sequence[GENE])
-        SNP_in_gene_vec <- (POSITION_vec - Reference_DF$start[GENE]) + 1
+        gene_len_bp     <- nchar(Reference_DF$sequence[GENE])
+        # genomic -> spliced CDS position, excising introns (NA if intronic)
+        SNP_in_gene_vec <- vapply(POSITION_vec, genomic_to_spliced_pos,
+                                  integer(1), exons = Reference_DF$exons[[GENE]])
+        if (any(is.na(SNP_in_gene_vec))) next  # position(s) intronic for this gene
 
         Theoretical_Ref_vec <- character(n_comp)
         for (i in seq_len(n_comp)) {
@@ -66,7 +73,8 @@ genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = NULL) {
             MUTATION_out_vec[i] <- if (MUTATION_vec[i] == "_") "_" else
               as.character(Biostrings::reverseComplement(Biostrings::DNAString(MUTATION_vec[i])))
           }
-          SNP_in_gene_vec <- (Reference_DF$end[GENE] - POSITION_vec) + 1
+          # reflect spliced-CDS position onto the coding (reverse) strand
+          SNP_in_gene_vec <- (gene_len_bp - SNP_in_gene_vec) + 1
         }
 
         SNP_Gene_vec <- paste0(Theoretical_Ref_vec, SNP_in_gene_vec, MUTATION_out_vec)
@@ -85,7 +93,16 @@ genome.snp.to.gene.snp <- function(snp_db, ref_seq, cores = NULL) {
     Out
   }
 
-  Out <- full_join(select(SNP_List, SNP), Temp)
+  # foreach returns an empty frame (no columns) when NO SNP overlaps any gene;
+  # full_join() would then abort with "`by` must be supplied". Handle that case
+  # explicitly so an all-intergenic (or all-intronic) batch yields Non-gene rows.
+  if (is.null(Temp) || nrow(Temp) == 0L || !("Gene" %in% names(Temp))) {
+    Out <- select(SNP_List, SNP)
+    Out$Gene     <- NA_character_
+    Out$SNP_Gene <- NA_character_
+  } else {
+    Out <- full_join(select(SNP_List, SNP), Temp, by = "SNP")
+  }
   Out$Gene[is.na(Out$Gene)]         <- "Non-gene region"
   Out$SNP_Gene[is.na(Out$SNP_Gene)] <- "Non-gene region"
 

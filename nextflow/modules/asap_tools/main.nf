@@ -215,13 +215,15 @@ process PROCESS_QC_PLOTS {
     script:
     def poi_param      = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
     def snp_prop_param = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
+    def interactive    = params.asaptools_interactive_plots.toString().toUpperCase()
     """
     process_asaptools_generate_figures.R \\
         ${combined_rdata} \\
         ${prefix} \\
         ${poi_param} \\
         ${snp_prop_param} \\
-        ${params.depth}
+        ${params.depth} \\
+        ${interactive}
     """
 }
 
@@ -234,6 +236,7 @@ process PROCESS_SNP_PLOTS {
     path combined_rdata
     val  prefix
     val  poi_input
+    path aa_rdata
     path "genbank_input/*"
 
     output:
@@ -244,6 +247,8 @@ process PROCESS_SNP_PLOTS {
     def poi_param         = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
     def snp_prop_param    = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
     def breadth_threshold = params.asaptools_breadth_threshold ?: params.breadth
+    def interactive       = params.asaptools_interactive_plots.toString().toUpperCase()
+    def aa_param          = (aa_rdata && aa_rdata.name != 'null') ? aa_rdata : "NULL"
     """
     shopt -s nullglob
     process_asaptools_snp_figures.R \\
@@ -253,6 +258,8 @@ process PROCESS_SNP_PLOTS {
         ${snp_prop_param} \\
         ${params.depth} \\
         ${breadth_threshold} \\
+        ${interactive} \\
+        ${aa_param} \\
         genbank_input/*
     """
 }

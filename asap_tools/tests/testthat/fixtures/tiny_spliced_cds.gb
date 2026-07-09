@@ -1,0 +1,23 @@
+LOCUS       SPLICED1                  36 bp    DNA     linear   VRL 01-JAN-2024
+DEFINITION  Synthetic two-exon (spliced) CDS fixture for AA-calling tests.
+ACCESSION   SPLICED1
+VERSION     SPLICED1.1
+KEYWORDS    .
+SOURCE      synthetic construct
+  ORGANISM  synthetic construct
+            other sequences; artificial sequences.
+FEATURES             Location/Qualifiers
+     source          1..36
+     gene            join(1..8,21..36)
+                     /gene="SPLG"
+                     /locus_tag="SPLG_01"
+     CDS             join(1..8,21..36)
+                     /gene="SPLG"
+                     /locus_tag="SPLG_01"
+                     /codon_start=1
+                     /product="spliced test protein"
+                     /protein_id="SPL_00001.1"
+                     /translation="MAKPGFW"
+ORIGIN      
+        1 atggcaaagt acgtacgtag acccgggttt tggtaa
+//

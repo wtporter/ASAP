@@ -288,6 +288,19 @@ workflow {
                 parallel_r_out.rdata.collect()
                 )
 
+            // Amino-acid conversion — shared by the SNP plots (tile coloring by
+            // effect) and the SNP table. Runs once when GenBank refs exist and a
+            // consumer is enabled; otherwise a null sentinel flows through.
+            def aa_data_ch
+            if (gb_file_to_use && (params.asaptools_snp_plots || params.asaptools_snp_table)) {
+                aa_data_ch = PROCESS_SNPS_TO_AMINOACIDS(
+                    combined_data.combined_rdata,
+                    gb_file_to_use
+                ).snp_to_amino_rdata
+            } else {
+                aa_data_ch = Channel.value(null_file)
+            }
+
             // 3. Optional Coverage Table
             if(params.asaptools_cov_table){
 
@@ -319,6 +332,7 @@ workflow {
                     combined_data.combined_rdata,
                     params.file_name,
                     poi_input,
+                    aa_data_ch,
                     gb_file_to_use ?: []
                 )
             }
@@ -336,17 +350,8 @@ workflow {
                 // If no GB files, pass an empty list []
                 def gb_files_ch = gb_file_to_use ?: []
 
-                // 2. Handle Amino Acid Data (Optional)
-                // Only run AA conversion if GB files exist
-                def aa_data_ch
-                if (gb_file_to_use) {
-                    aa_data_ch = PROCESS_SNPS_TO_AMINOACIDS(
-                        combined_data.combined_rdata,
-                        gb_file_to_use
-                    ).snp_to_amino_rdata
-                } else {
-                    aa_data_ch = Channel.value(file("${baseDir}/bin/null"))
-                }
+                // 2. Amino Acid Data — reuse the shared aa_data_ch computed above
+                //    (single PROCESS_SNPS_TO_AMINOACIDS run for plots + table).
 
                 // 3. Handle Primer BED (Optional)
                 // Reuse the effective BED (generated from CSV, or the supplied BED, or null_file)

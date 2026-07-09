@@ -12,7 +12,7 @@ suppressPackageStartupMessages({
 args <- commandArgs(trailingOnly = TRUE)
 
 if (length(args) < 3) {
-  stop("Usage: process_asaptools_generate_figures.R <rdata> <prefix> <poi_csv> [<snp_threshold>] [<snp_depth>]")
+  stop("Usage: process_asaptools_generate_figures.R <rdata> <prefix> <poi_csv> [<snp_threshold>] [<snp_depth>] [<interactive>]")
 }
 
 RDATA_INPUT   <- args[1]
@@ -20,6 +20,9 @@ PREFIX        <- args[2]
 POI_CSV       <- args[3]
 SNP_THRESHOLD <- if (length(args) >= 4 && !args[4] %in% c("NULL", "NA", "")) as.numeric(args[4]) else 0.03
 MIN_DEPTH     <- if (length(args) >= 5 && !args[5] %in% c("NULL", "NA", "")) as.numeric(args[5]) else 100
+# Interactive HTML widgets (selfcontained ggplotly) are expensive; off by default,
+# exported only when arg 6 is TRUE. JPGs are always written.
+EXPORT_INTERACTIVE <- length(args) >= 6 && toupper(args[6]) == "TRUE"
 
 # Wraps a plot block so a single failure doesn't abort all plots
 safe_plot <- function(label, expr) {
@@ -31,6 +34,24 @@ safe_plot <- function(label, expr) {
 # Word-wrap caption text; preserves existing \n paragraph breaks
 wrap_cap <- function(txt, w = 110) {
   paste(sapply(strsplit(txt, "\n")[[1]], stringr::str_wrap, width = w), collapse = "\n")
+}
+
+# --- Automatic figure sizing -------------------------------------------------
+# All ggsave() dimensions below are derived from the number of facets (assays)
+# and samples actually present in each plot, so figures stay legible whether a
+# run has 2 samples or 200 and 1 amplicon or 50.
+
+# Clamp a numeric to the range [lo, hi]
+clamp <- function(x, lo, hi) max(lo, min(hi, x))
+
+# Rows/cols ggplot2::facet_wrap() will use for n panels. Mirrors ggplot's
+# default heuristic (~square grid) unless ncol/nrow is pinned.
+facet_grid_dims <- function(n, ncol = NULL, nrow = NULL) {
+  n <- max(1, n)
+  if (!is.null(ncol))      { nc <- ncol;              nr <- ceiling(n / nc) }
+  else if (!is.null(nrow)) { nr <- nrow;              nc <- ceiling(n / nr) }
+  else                     { nc <- ceiling(sqrt(n));  nr <- ceiling(n / nc) }
+  list(nrow = max(1, nr), ncol = max(1, nc))
 }
 
 load(RDATA_INPUT)
@@ -99,9 +120,14 @@ safe_plot("Coverage Depth", {
       ) +
       theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
 
-  ggsave(paste0(PREFIX, "_QC_coverage_depth.jpg"), plot = p_cov, width = 12, height = 8, dpi = 300)
-  interactive_plot_coverage <- ggplotly(p_cov, tooltip = "text") %>% partial_bundle()
-  saveWidget(interactive_plot_coverage, paste0(PREFIX, "_QC_coverage_depth.html"), selfcontained = TRUE)
+  # ncol=1 stack: one facet row per assay -> height grows with facet count
+  n_facets_cov <- length(unique(array_avg$assay_name))
+  cov_h <- clamp(3 + 2.3 * n_facets_cov, 6, 49)
+  ggsave(paste0(PREFIX, "_QC_coverage_depth.jpg"), plot = p_cov, width = 12, height = cov_h, dpi = 300)
+  if (EXPORT_INTERACTIVE) {
+    interactive_plot_coverage <- ggplotly(p_cov, tooltip = "text") %>% partial_bundle()
+    saveWidget(interactive_plot_coverage, paste0(PREFIX, "_QC_coverage_depth.html"), selfcontained = TRUE)
+  }
 })
 
 # --- Plot 2: N Read Proportion ---
@@ -122,9 +148,14 @@ safe_plot("N Read Proportion", {
          caption = wrap_cap("Percentage of reads carrying 'N' bases at each reference position, smoothed over a rolling window. 'N' bases are contributed by base quality masking, primer sequence masking, and SMOR deduplication masking.")) +
     theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
 
-  ggsave(paste0(PREFIX, "_QC_n_reads_proportion.jpg"), plot = p_n, width = 12, height = 8, dpi = 300)
-  interactive_plot_n_reads <- ggplotly(p_n, tooltip = "text") %>% partial_bundle()
-  saveWidget(interactive_plot_n_reads, paste0(PREFIX, "_QC_n_reads_proportion.html"), selfcontained = TRUE)
+  # ncol=1 stack: one facet row per assay -> height grows with facet count
+  n_facets_n <- length(unique(array_avg$assay_name))
+  n_h <- clamp(3 + 2.3 * n_facets_n, 6, 49)
+  ggsave(paste0(PREFIX, "_QC_n_reads_proportion.jpg"), plot = p_n, width = 12, height = n_h, dpi = 300)
+  if (EXPORT_INTERACTIVE) {
+    interactive_plot_n_reads <- ggplotly(p_n, tooltip = "text") %>% partial_bundle()
+    saveWidget(interactive_plot_n_reads, paste0(PREFIX, "_QC_n_reads_proportion.html"), selfcontained = TRUE)
+  }
 })
 
 # --- Plot 3: Breadth of Coverage Heatmap ---
@@ -155,9 +186,16 @@ safe_plot("Breadth Heatmap", {
          x = "Assay", y = "Sample") +
     theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
 
-  ggsave(paste0(PREFIX, "_Breadth_coverage_heatmap.jpg"), plot = p_breadth, width = 12, height = 8, dpi = 300)
-  interactive_breadth <- ggplotly(p_breadth, tooltip = "text") %>% partial_bundle()
-  saveWidget(interactive_breadth, paste0(PREFIX, "_Breadth_coverage_heatmap.html"), selfcontained = TRUE)
+  # Heatmap: assays on x, samples on y -> width per assay tile, height per sample row
+  n_assays_br  <- length(unique(breadth_data$assay_name))
+  n_samples_br <- length(unique(breadth_data$name_short))
+  br_w <- clamp(4 + 0.55 * n_assays_br,  8, 40)
+  br_h <- clamp(3 + 0.35 * n_samples_br, 6, 40)
+  ggsave(paste0(PREFIX, "_Breadth_coverage_heatmap.jpg"), plot = p_breadth, width = br_w, height = br_h, dpi = 300)
+  if (EXPORT_INTERACTIVE) {
+    interactive_breadth <- ggplotly(p_breadth, tooltip = "text") %>% partial_bundle()
+    saveWidget(interactive_breadth, paste0(PREFIX, "_Breadth_coverage_heatmap.html"), selfcontained = TRUE)
+  }
 })
 
 # --- Plot 4: Alignment Summary (counts + percentage panels) ---
@@ -240,45 +278,56 @@ safe_plot("Alignment Summary", {
     )
   )
 
+  # Two stacked panels, samples on x -> width grows with sample count;
+  # height is two panels of bars plus room for the shared legend + caption.
+  n_samples_al <- length(unique(align_data$name_short))
+  al_w <- clamp(6 + 0.45 * n_samples_al, 12, 40)
+  al_h <- clamp(al_w * 0.85,             14, 30)
   ggsave(paste0(PREFIX, "_QC_alignment_summary.jpg"), plot = p_align_combined,
-         width = 18, height = 8, dpi = 300)
-  interactive_align <- subplot(
-    ggplotly(p_align,     tooltip = "text") %>% partial_bundle(),
-    ggplotly(p_align_pct, tooltip = "text") %>% partial_bundle(),
-    nrows = 1, shareY = FALSE, titleX = TRUE, titleY = TRUE
-  ) %>% layout(title = "Alignment Summary")
-  saveWidget(interactive_align, paste0(PREFIX, "_QC_alignment_summary.html"), selfcontained = TRUE)
+         width = al_w, height = al_h, dpi = 300)
+  if (EXPORT_INTERACTIVE) {
+    interactive_align <- subplot(
+      ggplotly(p_align,     tooltip = "text") %>% partial_bundle(),
+      ggplotly(p_align_pct, tooltip = "text") %>% partial_bundle(),
+      nrows = 1, shareY = FALSE, titleX = TRUE, titleY = TRUE
+    ) %>% layout(title = "Alignment Summary")
+    saveWidget(interactive_align, paste0(PREFIX, "_QC_alignment_summary.html"), selfcontained = TRUE)
+  }
 })
 
 # --- Plot 5: Read Funnel (counts + percentage panels) ---
 safe_plot("Read Funnel", {
+  # NOTE: no_primer_reads is intentionally NOT a loss category. With
+  # primer_only=false (the default), reads where no primer was detected are only
+  # primer-masked (bases -> N); they still flow through to amplicon_reads. The
+  # true conservation is aligned_reads = amplicon_reads + identity_discarded +
+  # smor_pairs_dropped + residual, so counting no_primer_reads here would
+  # double-count them (once as "lost", once inside Final Reads). SMOR columns are
+  # NA when SMOR is off, so coalesce to 0 to keep the arithmetic well-defined.
   funnel_data <- final_asap %>%
     select(name, name_short, assay_name,
-           aligned_reads, no_primer_reads,
+           aligned_reads,
            identity_discarded,
            smor_pairs_dropped,
            amplicon_reads) %>%
     mutate(
-      across(c(aligned_reads, no_primer_reads, identity_discarded,
+      across(c(aligned_reads, identity_discarded,
                smor_pairs_dropped, amplicon_reads), as.numeric),
-      lost_smor     = smor_pairs_dropped,
-      lost_identity = identity_discarded,
-      lost_primer   = no_primer_reads,
-      kept          = amplicon_reads,
-      lost_other    = pmax(0, aligned_reads - kept - lost_smor - lost_identity - lost_primer)
+      lost_identity = coalesce(identity_discarded, 0),
+      lost_smor     = coalesce(smor_pairs_dropped, 0),
+      kept          = coalesce(amplicon_reads, 0),
+      lost_other    = pmax(0, coalesce(aligned_reads, 0) - kept - lost_smor - lost_identity)
     )
 
-  fate_levels  <- c("Lost: No Primer", "Lost: Identity Filter",
-                    "Lost: SMOR", "Lost: Other", "Final Reads")
-  fate_colours <- c("Lost: No Primer"        = "#e74c3c",
-                    "Lost: Identity Filter"   = "#e67e22",
+  fate_levels  <- c("Lost: Identity Filter", "Lost: SMOR",
+                    "Lost: Other", "Final Reads")
+  fate_colours <- c("Lost: Identity Filter"   = "#e67e22",
                     "Lost: SMOR"              = "#f1c40f",
                     "Lost: Other"             = "#95a5a6",
                     "Final Reads"             = "#2ecc71")
 
   funnel_long <- funnel_data %>%
     select(name, name_short, assay_name,
-           "Lost: No Primer"       = lost_primer,
            "Lost: Identity Filter" = lost_identity,
            "Lost: SMOR"            = lost_smor,
            "Lost: Other"           = lost_other,
@@ -306,7 +355,7 @@ safe_plot("Read Funnel", {
                              "<br>Fate: ", Fate,
                              "<br>Reads: ", scales::comma(Reads)))) +
     geom_col() +
-    facet_wrap(~assay_name, scales = "free") +
+    facet_wrap(~assay_name, scales = "free_x") +
     scale_y_continuous(labels = scales::comma) +
     scale_fill_manual(values = fate_colours) +
     funnel_base_theme +
@@ -334,7 +383,7 @@ safe_plot("Read Funnel", {
     caption    = wrap_cap(paste(
       "(A) Read counts per amplicon per sample stacked by filtering fate. Bar height = total reads aligned to the amplicon.",
       "(B) Same data as percentage of aligned reads per amplicon.",
-      "Categories — Lost:No Primer: primer sequence not detected in read; Lost:Identity: read pair did not meet percent-identity threshold; Lost:SMOR: duplicate pair removed by SMOR deduplication; Lost:Other: reads not accounted for by the above filters; Final Reads: reads passing all filters and counted as amplicon_reads.",
+      "Categories — Lost:Identity: read pair did not meet percent-identity threshold; Lost:SMOR: duplicate pair removed by SMOR deduplication; Lost:Other: aligned reads not accounted for by the above filters; Final Reads: reads passing all filters and counted as amplicon_reads. Reads with no detected primer are primer-masked but still retained (they pass through to Final Reads), so they are not shown as a loss.",
       sep = "\n"
     ), w = 120),
     theme = theme(
@@ -343,12 +392,22 @@ safe_plot("Read Funnel", {
     )
   )
 
+  # facet_wrap grid stacked twice (counts over percentage). Width scales with the
+  # facet columns and the samples shown per facet; height with the facet rows,
+  # doubled for the two patchwork panels, plus room for the legend + caption.
+  n_samples_fn <- length(unique(funnel_long$name_short))
+  n_assays_fn  <- length(unique(funnel_long$assay_name))
+  fdim <- facet_grid_dims(n_assays_fn)
+  fn_w <- clamp(fdim$ncol * (2.5 + 0.4 * n_samples_fn), 12, 49)
+  fn_h <- clamp(2 * fdim$nrow * 3.2 + 3,                12, 49)
   ggsave(paste0(PREFIX, "_QC_read_funnel.jpg"), plot = p_funnel_combined,
-         width = 14, height = 14, dpi = 300)
-  interactive_funnel <- subplot(
-    ggplotly(p_funnel,     tooltip = "text") %>% partial_bundle(),
-    ggplotly(p_funnel_pct, tooltip = "text") %>% partial_bundle(),
-    nrows = 2, shareX = FALSE, shareY = FALSE, titleX = TRUE, titleY = TRUE
-  ) %>% layout(title = "Read Fate per Amplicon")
-  saveWidget(interactive_funnel, paste0(PREFIX, "_QC_read_funnel.html"), selfcontained = TRUE)
+         width = fn_w, height = fn_h, dpi = 300)
+  if (EXPORT_INTERACTIVE) {
+    interactive_funnel <- subplot(
+      ggplotly(p_funnel,     tooltip = "text") %>% partial_bundle(),
+      ggplotly(p_funnel_pct, tooltip = "text") %>% partial_bundle(),
+      nrows = 2, shareX = FALSE, shareY = FALSE, titleX = TRUE, titleY = TRUE
+    ) %>% layout(title = "Read Fate per Amplicon")
+    saveWidget(interactive_funnel, paste0(PREFIX, "_QC_read_funnel.html"), selfcontained = TRUE)
+  }
 })

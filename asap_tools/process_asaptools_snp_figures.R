@@ -13,11 +13,12 @@ suppressPackageStartupMessages({
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
 .functions_dir <- file.path(dirname(.script_path), "asap_tools_functions")
 source(file.path(.functions_dir, "_extract_gene_table.R"))
+source(file.path(.functions_dir, "_split_genbank_records.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
 
 if (length(args) < 3) {
-  stop("Usage: process_asaptools_snp_figures.R <rdata> <prefix> <poi_csv> [<snp_threshold>] [<snp_depth>] [<breadth_threshold>] [<gb1> ...]")
+  stop("Usage: process_asaptools_snp_figures.R <rdata> <prefix> <poi_csv> [<snp_threshold>] [<snp_depth>] [<breadth_threshold>] [<aa_rdata>] [<gb1> ...]")
 }
 
 RDATA_INPUT       <- args[1]
@@ -26,7 +27,35 @@ POI_CSV           <- args[3]
 SNP_THRESHOLD     <- if (length(args) >= 4 && !args[4] %in% c("NULL", "NA", "")) as.numeric(args[4]) else 0.03
 MIN_DEPTH         <- if (length(args) >= 5 && !args[5] %in% c("NULL", "NA", "")) as.numeric(args[5]) else 100
 BREADTH_THRESHOLD <- if (length(args) >= 6 && !args[6] %in% c("NULL", "NA", "")) as.numeric(args[6]) else 0.8
-GB_FILES          <- if (length(args) >= 7) args[7:length(args)] else character(0)
+# Trailing args (7+) are, in order and all optional: an interactive-export toggle
+# (TRUE/FALSE), the amino-acid table (SNP_Amino_Acid_Table.Rdata, used to color
+# SNP tiles by predicted effect), then GenBank references. Each is auto-detected
+# by shape (TRUE/FALSE, *.Rdata, otherwise a GenBank path) so the toggle and AA
+# table can be omitted and legacy `... breadth <gb...>` invocations still work.
+.tail <- if (length(args) >= 7) args[7:length(args)] else character(0)
+
+# Interactive HTML widgets are expensive (selfcontained ggplotly). Off by default;
+# only exported when the leading tail arg is TRUE.
+if (length(.tail) >= 1 && toupper(.tail[1]) %in% c("TRUE", "FALSE")) {
+  EXPORT_INTERACTIVE <- toupper(.tail[1]) == "TRUE"
+  .tail <- .tail[-1]
+} else {
+  EXPORT_INTERACTIVE <- FALSE
+}
+
+if (length(.tail) == 0) {
+  AA_RDATA <- NA_character_
+  GB_FILES <- character(0)
+} else if (.tail[1] %in% c("NULL", "NA", "")) {          # explicit "no AA table"
+  AA_RDATA <- NA_character_
+  GB_FILES <- if (length(.tail) >= 2) .tail[-1] else character(0)
+} else if (grepl("\\.Rdata$", .tail[1], ignore.case = TRUE)) {
+  AA_RDATA <- .tail[1]
+  GB_FILES <- if (length(.tail) >= 2) .tail[-1] else character(0)
+} else {                                                  # legacy: GenBank files here on
+  AA_RDATA <- NA_character_
+  GB_FILES <- .tail
+}
 
 BREADTH_THRESHOLD_PCT <- BREADTH_THRESHOLD * 100
 
@@ -38,6 +67,56 @@ safe_plot <- function(label, expr) {
 
 wrap_cap <- function(txt, w = 110) {
   paste(sapply(strsplit(txt, "\n")[[1]], stringr::str_wrap, width = w), collapse = "\n")
+}
+
+# --- Automatic figure sizing -------------------------------------------------
+# Every JPG dimension below is derived from the number of facets (assays) and
+# samples actually present, so figures stay legible whether a run has 1 amplicon
+# or 50 and a handful of samples or hundreds.
+
+# Clamp a numeric to the range [lo, hi]
+clamp <- function(x, lo, hi) max(lo, min(hi, x))
+
+# Rows/cols ggplot2::facet_wrap() will use for n panels. Mirrors ggplot's
+# default heuristic (~square grid) unless ncol/nrow is pinned.
+facet_grid_dims <- function(n, ncol = NULL, nrow = NULL) {
+  n <- max(1, n)
+  if (!is.null(ncol))      { nc <- ncol;              nr <- ceiling(n / nc) }
+  else if (!is.null(nrow)) { nr <- nrow;              nc <- ceiling(n / nr) }
+  else                     { nc <- ceiling(sqrt(n));  nr <- ceiling(n / nc) }
+  list(nrow = max(1, nr), ncol = max(1, nc))
+}
+
+# Width/height for a facet_wrap grid: scale with the number of facet columns/rows
+size_facet_grid <- function(n_facets, w_per = 5.5, h_per = 3.8,
+                            w_base = 2, h_base = 2,
+                            min_w = 8, max_w = 40, min_h = 6, max_h = 49,
+                            ncol = NULL, nrow = NULL) {
+  d <- facet_grid_dims(n_facets, ncol = ncol, nrow = nrow)
+  list(width  = clamp(w_base + w_per * d$ncol, min_w, max_w),
+       height = clamp(h_base + h_per * d$nrow, min_h, max_h))
+}
+
+# --- SNP effect classification (for genome-track tile coloring) --------------
+# Categories, ordered by increasing impact so a position with several variants
+# takes its highest-impact class (see aa_category_map build below).
+AA_CATEGORY_LEVELS <- c("Non-coding", "Synonymous", "AA Change", "Frameshift")
+AA_CATEGORY_COLORS <- c("Non-coding"   = "#95a5a6",  # grey
+                        "Synonymous"   = "#3498db",  # blue
+                        "AA Change"    = "#e74c3c",  # red (missense / in-frame indel)
+                        "Frameshift"   = "#8e44ad",  # purple (out-of-frame indel)
+                        "Unclassified" = "#e74c3c")  # fallback when no AA table
+
+# Map an Amino_Acids$AA value to a category. AA is one of: "Synonymous",
+# "Non-coding SNP"/"Non-coding", "Insertion/Deletion Not In-frame", or a
+# "GENE:refPOSalt" string (missense or in-frame indel).
+classify_aa <- function(aa) {
+  dplyr::case_when(
+    stringr::str_detect(aa, "Synonymous")    ~ "Synonymous",
+    stringr::str_detect(aa, "Not In-frame")  ~ "Frameshift",
+    stringr::str_detect(aa, "[Nn]on-coding") ~ "Non-coding",
+    TRUE                                     ~ "AA Change"
+  )
 }
 
 load(RDATA_INPUT)
@@ -121,9 +200,13 @@ safe_plot("SNP Prevalence", {
          caption = wrap_cap("Maximum SNP proportion (%) per position per sample, for positions meeting the minimum depth threshold. Only non-reference variant calls are shown. Each dot marks a genomic position where a variant was detected.")) +
     theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
 
-  ggsave(paste0(PREFIX, "_SNP_position_prevalence.jpg"), plot = p_SNP, width = 12, height = 8, dpi = 300)
-  interactive_plot_SNP <- ggplotly(p_SNP, tooltip = "text") %>% partial_bundle()
-  saveWidget(interactive_plot_SNP, paste0(PREFIX, "_SNP_position_prevalence.html"), selfcontained = TRUE)
+  dim_snp <- size_facet_grid(length(unique(SNP_Plot_Data$assay_name)))
+  ggsave(paste0(PREFIX, "_SNP_position_prevalence.jpg"), plot = p_SNP,
+         width = dim_snp$width, height = dim_snp$height, dpi = 300)
+  if (EXPORT_INTERACTIVE) {
+    interactive_plot_SNP <- ggplotly(p_SNP, tooltip = "text") %>% partial_bundle()
+    saveWidget(interactive_plot_SNP, paste0(PREFIX, "_SNP_position_prevalence.html"), selfcontained = TRUE)
+  }
 
   # --- Plot: SNP Proportion Density ---
   p_snp_dist <- SNPS_plot %>%
@@ -141,9 +224,13 @@ safe_plot("SNP Prevalence", {
     ) +
     theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
 
-  ggsave(paste0(PREFIX, "_SNP_proportion_density.jpg"), plot = p_snp_dist, width = 12, height = 8, dpi = 300)
-  interactive_snp_dist <- ggplotly(p_snp_dist, tooltip = "text") %>% partial_bundle()
-  saveWidget(interactive_snp_dist, paste0(PREFIX, "_SNP_proportion_density.html"), selfcontained = TRUE)
+  dim_dens <- size_facet_grid(length(unique(SNPS_plot$assay_name)))
+  ggsave(paste0(PREFIX, "_SNP_proportion_density.jpg"), plot = p_snp_dist,
+         width = dim_dens$width, height = dim_dens$height, dpi = 300)
+  if (EXPORT_INTERACTIVE) {
+    interactive_snp_dist <- ggplotly(p_snp_dist, tooltip = "text") %>% partial_bundle()
+    saveWidget(interactive_snp_dist, paste0(PREFIX, "_SNP_proportion_density.html"), selfcontained = TRUE)
+  }
 })
 
 # --- Plot: Strand Bias ---
@@ -178,9 +265,13 @@ safe_plot("Strand Bias", {
            x = "SNP Proportion (%)", y = "Strand Ratio (R1 / R1+R2)") +
       theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
 
-    ggsave(paste0(PREFIX, "_SNP_strand_bias.jpg"), plot = p_strand, width = 12, height = 8, dpi = 300)
-    interactive_strand <- ggplotly(p_strand, tooltip = "text") %>% partial_bundle()
-    saveWidget(interactive_strand, paste0(PREFIX, "_SNP_strand_bias.html"), selfcontained = TRUE)
+    dim_strand <- size_facet_grid(length(unique(strand_data$assay_name)))
+    ggsave(paste0(PREFIX, "_SNP_strand_bias.jpg"), plot = p_strand,
+           width = dim_strand$width, height = dim_strand$height, dpi = 300)
+    if (EXPORT_INTERACTIVE) {
+      interactive_strand <- ggplotly(p_strand, tooltip = "text") %>% partial_bundle()
+      saveWidget(interactive_strand, paste0(PREFIX, "_SNP_strand_bias.html"), selfcontained = TRUE)
+    }
   } else {
     message("[INFO] Strand Bias plot skipped: snp_call_R1/snp_call_R2 columns not present.")
   }
@@ -226,9 +317,14 @@ safe_plot("Base Quality", {
            x = NULL, y = "Mean Base Quality Score") +
       theme(plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.3))
 
-    ggsave(paste0(PREFIX, "_SNP_base_quality.jpg"), plot = p_qual, width = 12, height = 8, dpi = 300)
-    interactive_qual <- ggplotly(p_qual, tooltip = "text") %>% partial_bundle()
-    saveWidget(interactive_qual, paste0(PREFIX, "_SNP_base_quality.html"), selfcontained = TRUE)
+    # x is only two categories per facet, so facets can be narrower than the default
+    dim_qual <- size_facet_grid(length(unique(qual_long$assay_name)), w_per = 3.5)
+    ggsave(paste0(PREFIX, "_SNP_base_quality.jpg"), plot = p_qual,
+           width = dim_qual$width, height = dim_qual$height, dpi = 300)
+    if (EXPORT_INTERACTIVE) {
+      interactive_qual <- ggplotly(p_qual, tooltip = "text") %>% partial_bundle()
+      saveWidget(interactive_qual, paste0(PREFIX, "_SNP_base_quality.html"), selfcontained = TRUE)
+    }
   } else {
     message("[INFO] Base Quality plot skipped: snp_call_qual_mean/snp_ref_qual_mean columns not present.")
   }
@@ -254,11 +350,46 @@ safe_plot("Genome Track", {
     group_by(name, name_short, assay_name, position) %>%
     summarise(Max_SNP_proportion = max(snp_proportion), .groups = "drop")
 
+  # Per-(assay, position) SNP effect category from the amino-acid table, used to
+  # color the panel-C tiles. Combo (codon-merge) tokens contribute every position
+  # they contain; a position keeps its highest-impact category across variants.
+  aa_category_map <- NULL
+  if (!is.na(AA_RDATA) && file.exists(AA_RDATA)) {
+    aa_env <- new.env()
+    load(AA_RDATA, envir = aa_env)
+    if (exists("Amino_Acids", envir = aa_env) && nrow(aa_env$Amino_Acids) > 0) {
+      aa_category_map <- aa_env$Amino_Acids %>%
+        transmute(assay_name,
+                  category = classify_aa(AA),
+                  position = stringr::str_extract_all(SNP, "[0-9]+")) %>%
+        tidyr::unnest(position) %>%
+        mutate(position = as.integer(position),
+               rank     = match(category, AA_CATEGORY_LEVELS)) %>%
+        group_by(assay_name, position) %>%
+        summarise(aa_category = AA_CATEGORY_LEVELS[max(rank)], .groups = "drop")
+      message(sprintf("[INFO] Genome Track: loaded %d AA-annotated positions for tile coloring.",
+                      nrow(aa_category_map)))
+    }
+  } else {
+    message("[INFO] Genome Track: no amino-acid table supplied; SNP tiles not colored by effect.")
+  }
+
   MAX_GENOME_LEN <- 2e6  # bp; this panel is designed for viral/phage-scale references
 
   for (gb_file in GB_FILES) {
+    # Split multi-record references into per-contig files (genbankr cannot read a
+    # multi-LOCUS file). Single-contig files yield exactly one record.
+    records <- tryCatch(split_genbank_records(gb_file), error = function(e) {
+      message(sprintf("[WARN] Genome Track: could not split %s: %s",
+                      basename(gb_file), conditionMessage(e)))
+      NULL
+    })
+    if (is.null(records)) next
+
+    for (rec_i in seq_len(nrow(records))) {
+      contig_path <- records$path[rec_i]
     tryCatch({
-      ref    <- suppressWarnings(genbankr::readGenBank(gb_file))
+      ref    <- suppressWarnings(genbankr::readGenBank(contig_path))
       acc_id <- ref@accession
       fb     <- sub("\\.[^.]+$", "", basename(gb_file))
 
@@ -313,7 +444,7 @@ safe_plot("Genome Track", {
         tibble(name = character(), name_short = character(), cov_xmid = numeric(), cov_width = integer())
       }
 
-      snp_width <- max(1, genome_len / 400)
+      snp_width <- max(1, genome_len / 1000)
 
       p_genes <- gene_df %>%
         ggplot() +
@@ -330,6 +461,18 @@ safe_plot("Genome Track", {
 
       safe_name <- gsub("[^A-Za-z0-9]", "_", acc_id)
 
+      # SNP effect per position for THIS contig (matched like snp_match above,
+      # then keyed on position). NULL when no amino-acid table was supplied.
+      aa_cat_contig <- if (!is.null(aa_category_map)) {
+        aa_category_map %>%
+          filter(grepl(acc_id, assay_name, fixed = TRUE) |
+                 grepl(fb,     assay_name, fixed = TRUE)) %>%
+          group_by(position) %>%
+          summarise(aa_category = AA_CATEGORY_LEVELS[max(match(aa_category, AA_CATEGORY_LEVELS))],
+                    .groups = "drop") %>%
+          mutate(position = as.numeric(position))
+      } else NULL
+
       render_genome_track <- function(snp_match_i, cov_tiles_i, suffix, caption_extra = "") {
         if (nrow(snp_match_i) == 0) {
           message(sprintf("[INFO] Genome Track (%s): no samples remain for %s, skipping.", suffix, acc_id))
@@ -343,10 +486,24 @@ safe_plot("Genome Track", {
           filter(as.character(name_short) %in% sample_order_i) %>%
           mutate(name_short = factor(as.character(name_short), levels = sample_order_i))
 
+        # Attach the SNP effect category used to fill panel-C tiles. Positions
+        # with no AA annotation default to Non-coding; with no table at all,
+        # every tile is a single "Unclassified" colour (legacy red).
+        if (!is.null(aa_cat_contig)) {
+          snp_match_i <- snp_match_i %>%
+            mutate(position = as.numeric(position)) %>%
+            left_join(aa_cat_contig, by = "position")
+          snp_match_i$aa_category[is.na(snp_match_i$aa_category)] <- "Non-coding"
+        } else {
+          snp_match_i$aa_category <- "Unclassified"
+        }
+        snp_match_i$aa_category <- factor(snp_match_i$aa_category,
+                                          levels = names(AA_CATEGORY_COLORS))
+
         p_density_i <- snp_match_i %>%
           ggplot(aes(x = as.numeric(position))) +
           geom_density(fill = "grey80", alpha = 0.5, color = "black",
-                       bw = max(50, genome_len / 100)) +
+                       bw = max(50, genome_len / 500)) +
           geom_vline(xintercept = gene_bounds, color = "grey60", alpha = 0.35, linewidth = 0.3) +
           scale_x_continuous(limits = x_lim, expand = c(0, 0), labels = scales::comma) +
           theme_minimal() +
@@ -363,12 +520,15 @@ safe_plot("Genome Track", {
           geom_vline(xintercept = gene_bounds, color = "grey60", alpha = 0.35, linewidth = 0.3) +
           geom_tile(data = snp_match_i,
                     aes(x = as.numeric(position), y = name_short,
-                        alpha = Max_SNP_proportion,
+                        fill = aa_category, alpha = Max_SNP_proportion,
                         text = paste0("Sample: ", name,
                                       "<br>Position: ", position,
-                                      "<br>Max SNP %: ", round(Max_SNP_proportion, 1), "%")),
-                    width = snp_width, height = 0.85, fill = "red") +
-          scale_alpha_continuous(range = c(0.2, 1), limits = c(0, 100),
+                                      "<br>Max SNP %: ", round(Max_SNP_proportion, 1), "%",
+                                      "<br>Effect: ", aa_category)),
+                    width = snp_width, height = 0.85) +
+          scale_fill_manual(values = AA_CATEGORY_COLORS, drop = TRUE,
+                            name = "SNP effect", na.value = "grey70") +
+          scale_alpha_continuous(range = c(0.45, 1), limits = c(0, 100),
                                  name = "Max SNP %") +
           scale_x_continuous(limits = x_lim, expand = c(0, 0), labels = scales::comma) +
           theme_minimal() +
@@ -383,7 +543,9 @@ safe_plot("Genome Track", {
                caption = wrap_cap(paste0(
                  "(A) CDS gene annotations parsed from ", basename(gb_file), ". ",
                  "(B) Kernel density estimate of SNP positions across the genome. ",
-                 "(C) Per-sample SNP locations (red) overlaid on covered regions (grey). ",
+                 "(C) Per-sample SNP locations colored by predicted effect ",
+                 "(red = AA change, purple = frameshift, blue = synonymous, grey = non-coding), ",
+                 "overlaid on covered regions (grey shading). Tile opacity scales with SNP proportion. ",
                  "Grey shading = positions with depth > 0. Only positions meeting minimum depth are eligible for SNP calling.",
                  caption_extra
                ))) +
@@ -399,12 +561,13 @@ safe_plot("Genome Track", {
             )
           )
 
-        track_height_i <- max(8, 3.5 + n_samples_i * 0.3)
+        # cap under ggplot2's 50-inch ggsave limit for very high sample counts
+        track_height_i <- min(49, max(8, 3.5 + n_samples_i * 0.3))
 
         ggsave(paste0(PREFIX, "_SNP_", safe_name, suffix, ".jpg"),
                plot = combined_track_i, width = 18, height = track_height_i, dpi = 300)
 
-        tryCatch({
+        if (EXPORT_INTERACTIVE) tryCatch({
           interactive_track_i <- ggplotly(p_heat_i, tooltip = "text") %>% partial_bundle()
           saveWidget(interactive_track_i,
                      paste0(PREFIX, "_SNP_", safe_name, suffix, ".html"),
@@ -441,5 +604,6 @@ safe_plot("Genome Track", {
       message(sprintf("[WARN] Genome Track for %s failed: %s",
                       basename(gb_file), conditionMessage(e)))
     })
+    }  # end per-contig record loop
   }
 })
