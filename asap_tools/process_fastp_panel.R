@@ -1,10 +1,12 @@
 #!/usr/bin/env Rscript
 
-library(tidyverse)
-library(jsonlite)
-library(plotly)
-library(htmlwidgets)
-library(patchwork)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(jsonlite)
+  library(plotly)
+  library(htmlwidgets)
+  library(patchwork)
+})
 
 # Resolve path to local function files relative to this script
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))

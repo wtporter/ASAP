@@ -138,8 +138,9 @@ read.ASAP.snps.individual <- function(XML, run_name = "Individual_XML_processing
           if (!inherits(strand_node, "xml_missing")) {
             snp_call_R1 <- xml_attr(strand_node, "R1")
             snp_call_R2 <- xml_attr(strand_node, "R2")
+            snp_call_SE <- xml_attr(strand_node, "SE")
           } else {
-            snp_call_R1 <- snp_call_R2 <- NA_character_
+            snp_call_R1 <- snp_call_R2 <- snp_call_SE <- NA_character_
           }
 
           SNP_Info <- data.frame(
@@ -167,6 +168,7 @@ read.ASAP.snps.individual <- function(XML, run_name = "Individual_XML_processing
             snp_ref_qual_max         = snp_ref_qual_max,
             snp_call_R1              = snp_call_R1,
             snp_call_R2              = snp_call_R2,
+            snp_call_SE              = snp_call_SE,
             linked_snp_targets       = linked_snp_targets,
             linked_snp_linkage_pcts  = linked_snp_linkage_pcts,
             linked_snp_co_counts     = linked_snp_co_counts,
@@ -188,7 +190,7 @@ read.ASAP.snps.individual <- function(XML, run_name = "Individual_XML_processing
                   "unmapped_reads", "location_depth", "snp_position", "snp_depth", "snp_proportion",
                   "snp_call_qual_mean", "snp_call_qual_median", "snp_call_qual_min", "snp_call_qual_max",
                   "snp_ref_qual_mean", "snp_ref_qual_median", "snp_ref_qual_min", "snp_ref_qual_max",
-                  "snp_call_R1", "snp_call_R2")
+                  "snp_call_R1", "snp_call_R2", "snp_call_SE")
     num_cols <- intersect(num_cols, names(Out))
     Out[num_cols] <- lapply(Out[num_cols], function(x) as.numeric(as.character(x)))
   }

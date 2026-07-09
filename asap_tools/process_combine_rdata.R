@@ -2,11 +2,13 @@
 
 # Load necessary libraries
 # tidyverse for data manipulation, data.table for high-speed binding
-library(tidyverse)
-library(foreach)
-library(doParallel)
-library(data.table)
-library(parallelly)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(foreach)
+  library(doParallel)
+  library(data.table)
+  library(parallelly)
+})
 
 # Resolve path to local function files relative to this script
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
@@ -78,6 +80,22 @@ combined_list <- foreach(f = files, .packages = c("tidyverse")) %dopar% {
       )) %>%
       ungroup()
     
+    # Guard: the POI CSV's `seqnames` must match the data's `assay_name`.
+    # If they don't overlap at all, the semi_join below silently drops every
+    # row, leaving final_array empty and crashing downstream coverage steps
+    # ~50 minutes later. Fail loudly here, naming both sides of the mismatch.
+    poi_refs   <- unique(as.character(Gene_Positions$reference))
+    data_names <- unique(as.character(temp_env$array_info$assay_name))
+    if (length(data_names) > 0 && !any(data_names %in% poi_refs)) {
+      stop(paste0(
+        "Positions-of-interest reference names do not match the data.\n",
+        "  POI CSV 'seqnames': ", paste(poi_refs,   collapse = ", "), "\n",
+        "  data 'assay_name':  ", paste(data_names, collapse = ", "), "\n",
+        "Fix the 'seqnames' column in ", poi_csv,
+        " to match the reference/assay name."
+      ))
+    }
+
     # filter unneeded array info...
     temp_env$array_info <- temp_env$array_info %>%
       semi_join(Gene_Positions, by = c("position" = "position", "assay_name" = "reference"))

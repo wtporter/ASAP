@@ -370,7 +370,7 @@ def _add_snp_node(parent, snp):
         base_R1 = snp.get('base_R1')
         base_R2 = snp.get('base_R2')
         base_SE = snp.get('base_SE')
-        if base_R1 or base_R2:
+        if base_R1 or base_R2 or base_SE:
             strand_node = ElementTree.SubElement(snp_node, 'base_strand_distribution')
             for base in base_counter:
                 attrs = {

@@ -1,7 +1,9 @@
 #!/usr/bin/env Rscript
 
-library(tidyverse)
-library(xml2)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(xml2)
+})
 
 # Resolve path to local function files relative to this script
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))

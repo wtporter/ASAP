@@ -1,11 +1,13 @@
 #!/usr/bin/env Rscript
 
-library(tidyverse)
-library(openxlsx)
-library(plotly)
-library(htmlwidgets)
-library(zoo)
-library(patchwork)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(openxlsx)
+  library(plotly)
+  library(htmlwidgets)
+  library(zoo)
+  library(patchwork)
+})
 
 args <- commandArgs(trailingOnly = TRUE)
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env Rscript
 
-library(tidyverse)
-library(openxlsx)
-library(doParallel)
-library(foreach)
-library(parallelly)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(openxlsx)
+  library(doParallel)
+  library(foreach)
+  library(parallelly)
+})
 
 # Resolve path to local function files relative to this script
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))

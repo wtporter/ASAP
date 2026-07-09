@@ -1,11 +1,13 @@
 #!/usr/bin/env Rscript
 
-library(tidyverse)
-library(plotly)
-library(htmlwidgets)
-library(patchwork)
-library(genbankr)
-library(Biostrings)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(plotly)
+  library(htmlwidgets)
+  library(patchwork)
+  library(genbankr)
+  library(Biostrings)
+})
 
 # Resolve path to local function files relative to this script
 .script_path   <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[grep("--file=", commandArgs(trailingOnly = FALSE))]))
@@ -357,14 +359,17 @@ safe_plot("Genome Track", {
         p_heat_i <- ggplot() +
           geom_tile(data = cov_tiles_i,
                     aes(x = cov_xmid, y = name_short, width = cov_width, height = 0.85),
-                    fill = "grey50", alpha = 0.18) +
+                    fill = "grey25", alpha = 0.35) +
           geom_vline(xintercept = gene_bounds, color = "grey60", alpha = 0.35, linewidth = 0.3) +
           geom_tile(data = snp_match_i,
                     aes(x = as.numeric(position), y = name_short,
+                        alpha = Max_SNP_proportion,
                         text = paste0("Sample: ", name,
                                       "<br>Position: ", position,
                                       "<br>Max SNP %: ", round(Max_SNP_proportion, 1), "%")),
                     width = snp_width, height = 0.85, fill = "red") +
+          scale_alpha_continuous(range = c(0.2, 1), limits = c(0, 100),
+                                 name = "Max SNP %") +
           scale_x_continuous(limits = x_lim, expand = c(0, 0), labels = scales::comma) +
           theme_minimal() +
           theme(axis.text.x  = element_text(angle = 45, hjust = 1),
