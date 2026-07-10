@@ -146,7 +146,7 @@ process SMOR_CORRECTION {
 
     script:
     """
-    generateSMORbam_correction.py -b ${bamfile} -c ${params.fill_character} -q ${params.qual_diff_threshold}
+    generateSMORbam_correction.py -b ${bamfile} -c ${params.fill_character} -q ${params.smor_correction_qual_diff_threshold} -a ${params.smor_correction_agreement_method}
     """
 }
 

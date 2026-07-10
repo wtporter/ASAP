@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased] — `development` (2026-07-09)
+
+SMOR consensus-correction parameters are now namespaced, and the way agreeing
+base qualities are combined is configurable.
+
+### Changed
+
+- **Renamed `qual_diff_threshold` → `smor_correction_qual_diff_threshold`.** This
+  parameter is consumed **only** by `SMOR_CORRECTION`
+  (`generateSMORbam_correction.py -q`), so it now carries the `smor_correction_`
+  prefix and lives under the **SMOR Processing Options** group. **Breaking:**
+  update any command line / config that passes `--qual_diff_threshold`. The
+  default (`10`) and the script's `-q` flag are unchanged.
+
+### Added
+
+- **`smor_correction_agreement_method`** (`sum` | `max`, default `sum`) — controls
+  how the two base qualities are combined when both reads of a pair **agree** at a
+  position during SMOR correction (`generateSMORbam_correction.py -a`):
+  `sum` = `min(q1+q2, 60)` (the previous fixed behavior), `max` = `max(q1, q2)`.
+  The default preserves existing output.
+
+### Fixed
+
+- Corrected an earlier changelog mislabel: `qual_diff_threshold` (now
+  `smor_correction_qual_diff_threshold`) was listed under *Identity filtering*.
+  It has always driven **SMOR consensus correction** (`generateSMORbam_correction.py`),
+  not `identityFilter.py`.
+
 ## [Unreleased] — `ROI_Development` → `public` (2026-07-09)
 
 **Scope:** 27 commits · 79 files · **+10,944 / −1,564** · 2026‑06‑09 → 2026‑07‑09
@@ -39,8 +68,8 @@ documents the architecture and per-sample output schema.
 | **Allele linkage** | New `allele_linkage.py`: codon-aware linkage of co-occurring variants; `codon_partner_names` tracking; linked-SNP sets. |
 | **Codon correction** | Full 3-base codon distributions (incl. partial/full deletions `_`); per-CDS codon entries even for overlaps; richer `codon_merges` (codon depth, reference/observed codon, call %, full distribution); `excl_has_n`/`excl_no_span` exclusion reporting. Params: `codon_correction`, `codon_correction_error`, `codon_correction_min_reads`. |
 | **GenBank CDS parsing** | New `genbank_cds.py` — CDS/allele-linkage logic extracted to a dedicated, testable module. |
-| **Identity filtering** | `identityFilter.py`: pair-aware percent-identity filtering. Params: `filter_pairs`, `qual_diff_threshold`. |
-| **SMOR consensus** | `generateSMORbam*.py`: configurable consensus-correction quality threshold. |
+| **Identity filtering** | `identityFilter.py`: pair-aware percent-identity filtering. Params: `filter_pairs`. |
+| **SMOR consensus** | `generateSMORbam*.py`: configurable consensus-correction quality threshold. Param: `qual_diff_threshold` (renamed to `smor_correction_qual_diff_threshold` in the current dev cycle). |
 | **BAM processing** | `newBamProcessor.py` reworked to emit the richer per-amplicon funnel + SNP metrics. `fasterBamProcessor.py` is an **experimental, unintegrated** performance rewrite — committed for reference only; it is not wired into the pipeline (nothing imports or invokes it) because it was not reliably faster. `newBamProcessor.py` remains the active processor. |
 | **SNP metrics** | Per-base quality stats (mean/median/min/max) and read-strand distribution (R1/R2/SE) now in the XML and parsed downstream. |
 | **ROI discovery** | Optional read-level variant / region-of-interest discovery. Params: `discover_roi`, `discover_roi_min_perc`, `discover_roi_min_reads`, `discover_roi_min_snp_perc`. |
@@ -126,7 +155,7 @@ and confirmed **byte-for-byte identical** output to the prior code on real RSV
 |---|---|---|
 | `skip_fastqc` / `skip_multiqc` | `true` | Skip FastQC / MultiQC steps |
 | `filter_pairs` | `true` | Pair-aware identity filtering |
-| `qual_diff_threshold` | `10` | Identity-filter quality delta |
+| `qual_diff_threshold` | `10` | SMOR correction quality delta (renamed to `smor_correction_qual_diff_threshold` in the current dev cycle) |
 | `codon_correction` | `false` | Enable codon correction |
 | `codon_correction_error` | `0.05` | Codon error rate |
 | `codon_correction_min_reads` | `10` | Min reads for codon correction |

@@ -374,18 +374,22 @@ default). When reads agree, quality scores are combined to produce higher-confid
 calls. This approach is advantageous when reads partially overlap and quality degrades
 toward the ends of R1 or R2.
 
-+----------------------------+-----------+--------------------------------------------------------+
-| Parameter                  | Default   | Description                                            |
-+============================+===========+========================================================+
-| ``--smor``                 | ``false`` | SMOR masking (full-overlap assays)                     |
-+----------------------------+-----------+--------------------------------------------------------+
-| ``--smor_correction``      | ``false`` | SMOR correction (partial-overlap assays)               |
-+----------------------------+-----------+--------------------------------------------------------+
-| ``--qual_diff_threshold``  | ``10``    | Phred quality difference required between R1/R2        |
-|                            |           | bases at a mismatch for the higher-quality base to     |
-|                            |           | be selected during SMOR correction; otherwise the      |
-|                            |           | position is masked with ``--fill_character``           |
-+----------------------------+-----------+--------------------------------------------------------+
++---------------------------------------------+-----------+--------------------------------------------------------+
+| Parameter                                   | Default   | Description                                            |
++=============================================+===========+========================================================+
+| ``--smor``                                  | ``false`` | SMOR masking (full-overlap assays)                     |
++---------------------------------------------+-----------+--------------------------------------------------------+
+| ``--smor_correction``                       | ``false`` | SMOR correction (partial-overlap assays)               |
++---------------------------------------------+-----------+--------------------------------------------------------+
+| ``--smor_correction_qual_diff_threshold``   | ``10``    | Phred quality difference required between R1/R2        |
+|                                             |           | bases at a mismatch for the higher-quality base        |
+|                                             |           | to be selected during SMOR correction; otherwise       |
+|                                             |           | the position is masked with ``--fill_character``       |
++---------------------------------------------+-----------+--------------------------------------------------------+
+| ``--smor_correction_agreement_method``      | ``sum``   | How agreeing R1/R2 base qualities are combined         |
+|                                             |           | during SMOR correction: ``sum`` = min(q1+q2, 60),      |
+|                                             |           | ``max`` = max(q1, q2)                                  |
++---------------------------------------------+-----------+--------------------------------------------------------+
 
 Step 6 — ASAP BAM Processing
 ------------------------------

@@ -173,7 +173,7 @@ trimmer JSON, and alignment flagstats into a QC report.
 | `MASK_PRIMERS` | `maskPrimers.py` | BAM+BAI, primer BED | masked BAM+BAI, `primer_masking_stats.tsv`, `{id}_masked_reads_per_primer.tsv` (per-primer/ref counts; also gathered into `sample_reports/general_reports/{name}_masked_reads_per_primer.tsv` via `collectFile` in `main.nf`) | `params.primer_file`, `params.wiggle`, `params.mask_bam`, `params.primer_only` |
 | `IDENTITY_FILTER` | `identityFilter.py` | BAM+BAI | filtered BAM+BAI, `identity_filter_stats.tsv` | `params.identity`, `params.filter_pairs` |
 | `SMOR` | `generateSMORbam.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor`, `params.fill_character` |
-| `SMOR_CORRECTION` | `generateSMORbam_correction.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor_correction`, `params.qual_diff_threshold` |
+| `SMOR_CORRECTION` | `generateSMORbam_correction.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor_correction`, `params.smor_correction_qual_diff_threshold`, `params.smor_correction_agreement_method` |
 | `PROCESS_BAM` | `newBamProcessor.py` | filtered BAM, original BAM, fastp JSON, stats TSVs, assay JSON, optional GenBank | `{sample_id}.xml` | `params.depth/breadth/proportion/mutation_depth/min_base_qual/consensus_proportion/fill_gaps/mark_deletions/whole_genome/codon_correction*/discover_roi*` |
 | `OUTPUT_COMBINER` | `outputCombiner.py` | collected XMLs | `{file_name}_analysis.xml` | `params.combine_output` |
 | `FORMAT_OUTPUT` | `formatOutput.py` | analysis XML, XSLT stylesheet | HTML report | `params.stylesheet`, `params.out_file` |
@@ -298,14 +298,19 @@ consensus reads, singleton reads — consumed by `newBamProcessor.py` via
 **Role**: Variant of SMOR generation that selects between mismatching bases
 based on Phred quality difference rather than masking all mismatches.
 
-**CLI**: `generateSMORbam_correction.py -b <bam> [-o <out.bam>] [-c <fill_char>] [-q <qual_diff_threshold>] [-l <logfile>]`
+**CLI**: `generateSMORbam_correction.py -b <bam> [-o <out.bam>] [-c <fill_char>] [-q <qual_diff_threshold>] [-a <sum|max>] [-l <logfile>]`
 
 **Core logic**: Differs from `generateSMORbam.py` at the disagreement step:
 if the quality difference between mismatching bases exceeds
 `--qual-diff-threshold`, the higher-quality base is selected instead of the
-fill character; otherwise the fill character is used. Quality scores at
-agreeing positions are summed (capped at 60). CIGAR operations are explicitly
+fill character; otherwise the fill character is used. At agreeing positions the
+two base qualities are combined per `--agreement-method`: `sum` (default) uses
+`min(q1+q2, 60)`, `max` uses `max(q1, q2)`. CIGAR operations are explicitly
 tracked to prevent coordinate shifts from deletions.
+
+**Nextflow params**: the pipeline exposes these as
+`--smor_correction_qual_diff_threshold` (script `-q`) and
+`--smor_correction_agreement_method` (script `-a`).
 
 ### `outputCombiner.py`
 

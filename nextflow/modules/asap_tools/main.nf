@@ -278,7 +278,8 @@ process PROCESS_FASTP_PANEL {
     path "${prefix}_QC_fastp_panel.jpg",  emit: jpg,  optional: true
 
     script:
+    def interactive = params.asaptools_interactive_plots.toString().toUpperCase()
     """
-    process_fastp_panel.R ${prefix} ${fastp_jsons}
+    process_fastp_panel.R ${prefix} ${interactive} ${fastp_jsons}
     """
 }

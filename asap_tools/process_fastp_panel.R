@@ -15,12 +15,15 @@ source(file.path(.functions_dir, "_shorten_sample_names.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
 
-if (length(args) < 2) {
-  stop("Usage: process_fastp_panel.R <prefix> <json1> [<json2> ...]")
+if (length(args) < 3) {
+  stop("Usage: process_fastp_panel.R <prefix> <interactive> <json1> [<json2> ...]")
 }
 
 PREFIX    <- args[1]
-json_files <- args[-1]
+# The self-contained interactive HTML widget is exported only when arg 2 is
+# TRUE. The JPG panel is always written.
+EXPORT_INTERACTIVE <- toupper(args[2]) == "TRUE"
+json_files <- args[-(1:2)]
 
 # Wraps a plot block so a single panel failure doesn't abort all others
 safe_plot <- function(label, expr) {
@@ -428,7 +431,7 @@ if (length(tiers) > 0) {
 }
 
 # --- Interactive Output (plotly subplots) ---
-tryCatch({
+if (EXPORT_INTERACTIVE) tryCatch({
   tier_interactive <- Filter(Negate(is.null), lapply(tiers, function(t) {
     ps <- lapply(t$plots, function(p) ggplotly(p, tooltip = "text") %>% partial_bundle())
     if (length(ps) == 1) return(ps[[1]])

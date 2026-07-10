@@ -51,7 +51,9 @@
       "title": "SMOR Processing Options",
       "properties": {
         "smor": { "type": "boolean", "default": false, "description": "Enable SMOR analysis." },
-        "smor_correction": { "type": "boolean", "default": false, "description": "Enable SMOR Correction analysis." }
+        "smor_correction": { "type": "boolean", "default": false, "description": "Enable SMOR Correction analysis." },
+        "smor_correction_qual_diff_threshold": { "type": "integer", "default": 10, "description": "Phred quality score difference required between paired-read bases at a mismatch position for the higher-quality base to be selected during SMOR consensus correction (generateSMORbam_correction.py -q argument). If below this threshold, the position is masked with fill_character." },
+        "smor_correction_agreement_method": { "type": "string", "default": "sum", "enum": ["sum", "max"], "description": "How SMOR consensus correction combines the two base qualities when both reads of a pair agree at a position (generateSMORbam_correction.py -a argument): 'sum' = min(q1+q2, 60) (default), 'max' = max(q1, q2)." }
       }
     },
     "variant_calling_options": {
@@ -70,7 +72,6 @@
         "breadth": { "type": "number", "default": 0.8, "description": "Minimum breadth of coverage required to consider an amplicon as present" },
         "mutation_depth": { "type": "integer", "default": 5, "description": "Minimum number of reads required to call a mutation at a given locus." },
         "fill_character": { "type": "string", "default": "N", "description": "Character to use for filling gaps." },
-        "qual_diff_threshold": { "type": "integer", "default": 10, "description": "Phred quality score difference required between paired-read bases at a mismatch position for the higher-quality base to be selected during SMOR consensus correction (generateSMORbam_correction.py -q argument). If below this threshold, the position is masked with fill_character." },
         "fill_gaps": { "type": "string", "default": "n", "description": "Character written at zero-coverage positions in the consensus sequence (passed to `--fill-gaps`)." },
         "mark_deletions": { "type": "string", "default": "_", "description": "Character written at deletion positions in the consensus sequence (passed to `--mark-deletions`)." },
         "whole_genome": {"type": "boolean", "default": false, "description": "JSON file uses a whole genome reference, so don't write out the consensus, depth, and proportion arrays for each sample"},
