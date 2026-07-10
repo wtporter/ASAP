@@ -75,9 +75,6 @@
         "fill_gaps": { "type": "string", "default": "n", "description": "Character written at zero-coverage positions in the consensus sequence (passed to `--fill-gaps`)." },
         "mark_deletions": { "type": "string", "default": "_", "description": "Character written at deletion positions in the consensus sequence (passed to `--mark-deletions`)." },
         "whole_genome": {"type": "boolean", "default": false, "description": "JSON file uses a whole genome reference, so don't write out the consensus, depth, and proportion arrays for each sample"},
-        "combine_output": { "type": "boolean", "default": true, "description": "Whether to combine output files." },
-        "stylesheet": { "type": ["string"], "default": "default_stylesheet/ASAP_fulldetails_web.xsl", "description": "XSLT stylesheet for transforming output." },
-        "out_file": { "type": ["string", "null"], "default": null, "description": "Name of the output HTML file." },
         "codon_correction": { "type": "boolean", "default": false, "description": "Annotate pairs of SNPs that fall in the same codon (per GenBank CDS annotations) with read-level allele-linkage information (<codon_merge>/<combo> XML elements). Requires --reference_input to resolve to GenBank file(s) (.gb/.gbk/.genbank), or --asaptools_genbank_location to be set." },
         "codon_correction_error": { "type": "number", "default": 0.05, "description": "Frequency tolerance (0–1) between two same-codon SNPs' variant frequencies for their <codon_merge> linkage to be classified as 'complete' (both SNPs change together) vs. 'partial'." },
         "codon_correction_min_reads": { "type": "integer", "default": 10, "description": "Minimum spanning reads required to confirm codon-level SNP linkage." },
@@ -85,6 +82,14 @@
         "discover_roi_min_perc": { "type": "number", "default": 0.1, "description": "Minimum co-occurrence proportion (0–1) to report a linked SNP." },
         "discover_roi_min_reads": { "type": "integer", "default": 10, "description": "Minimum co-occurring read count to report a linked SNP." },
         "discover_roi_min_snp_perc": { "type": "number", "default": 0.05, "description": "Minimum variant frequency (0–1) for a SNP to be considered (as an anchor or linked candidate) in discover-roi linkage analysis. Skips low-frequency 'position of interest' SNPs to reduce search space." }
+      }
+    },
+    "historic_output_options": {
+      "title": "Historic ASAP Output (XML/HTML) Options",
+      "properties": {
+        "combine_output": { "type": "boolean", "default": false, "description": "Whether to combine output files." },
+        "stylesheet": { "type": ["string"], "default": "default_stylesheet/ASAP_fulldetails_web.xsl", "description": "XSLT stylesheet for transforming output." },
+        "out_file": { "type": ["string", "null"], "default": null, "description": "Name of the output HTML file." }
       }
     },
     "asaptools_options": {
@@ -142,6 +147,7 @@
     { "$ref": "#/$defs/smor_options" },
     { "$ref": "#/$defs/variant_calling_options" },
     { "$ref": "#/$defs/bam_processor_options" },
+    { "$ref": "#/$defs/historic_output_options" },
     { "$ref": "#/$defs/asaptools_options" },
     { "$ref": "#/$defs/ivar_options" },
     { "$ref": "#/$defs/containers" },
