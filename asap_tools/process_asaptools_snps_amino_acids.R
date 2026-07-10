@@ -120,6 +120,19 @@ for (REFERENCE in GENBANK_FILES) {
     # Parse this contig once and share the gene table across both conversions.
     ref_df <- extract_gene_table(suppressWarnings(genbankr::readGenBank(rec_path)))
 
+    # A contig can have SNPs but no annotated CDS (nothing to translate); skip
+    # gracefully rather than crashing the downstream conversions.
+    if (nrow(ref_df) == 0) {
+      message(sprintf("No CDS for %s; skipping AA calling.", assay_token))
+      next
+    }
+
+    # Mark genes whose reference CDS was partial (span captured pre-strip by
+    # split_genbank_records). Per-gene, not per-contig: a segment may carry one
+    # truncated and one complete CDS (e.g. M2 + M1).
+    ref_df$partial <- paste(ref_df$start, ref_df$end) %in% records$partial_spans[[r]]
+    partial_genes  <- ref_df$gene[ref_df$partial]
+
     gene_snps_sub <- suppressWarnings(genome.snp.to.gene.snp(
       snp_db = SNPS_To_AA, ref_seq = rec_path,
       cores = parallelly::availableCores(), ref_df = ref_df
@@ -131,6 +144,18 @@ for (REFERENCE in GENBANK_FILES) {
       cores = parallelly::availableCores(), ref_df = ref_df
     )) %>%
       left_join(select(SNPS_To_AA, SNP, assay_name), by = "SNP")
+
+    # Flag SNPs that fall in a truncated gene so the caveat is visible in the
+    # user-facing tables (Amino_Acids$AA -> "Amino Acid Change";
+    # Gene_SNPS$SNP_Gene -> "SNP (Gene)"). Match by Gene, the identical string
+    # in ref_df$gene and both sub-tables.
+    if (length(partial_genes)) {
+      note <- " (*warning: reference truncated)"
+      aa_hit <- amino_acids_sub$Gene %in% partial_genes
+      amino_acids_sub$AA[aa_hit] <- paste0(amino_acids_sub$AA[aa_hit], note)
+      gs_hit <- gene_snps_sub$Gene %in% partial_genes
+      gene_snps_sub$SNP_Gene[gs_hit] <- paste0(gene_snps_sub$SNP_Gene[gs_hit], note)
+    }
 
     all_gene_snps[[assay_token]]   <- gene_snps_sub
     all_amino_acids[[assay_token]] <- amino_acids_sub

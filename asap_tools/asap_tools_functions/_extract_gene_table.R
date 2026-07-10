@@ -22,6 +22,20 @@ library(genbankr)
 extract_gene_table <- function(reference) {
   df <- data.frame(reference@cds)
 
+  # No CDS annotated on this contig (e.g. genbankr dropped every feature, or a
+  # contig genuinely carries no genes). Return an empty, correctly-typed table
+  # so callers can skip it instead of erroring on `df[[col]] <- NA_character_`.
+  if (nrow(df) == 0L) {
+    out <- data.frame(
+      gene = character(0), product = character(0), strand = character(0),
+      start = integer(0), end = integer(0), codon_start = integer(0),
+      translation = character(0), sequence = character(0),
+      stringsAsFactors = FALSE
+    )
+    out$exons <- list()
+    return(out)
+  }
+
   # Flatten any CharacterList columns (e.g. translation) to plain strings.
   df <- as.data.frame(lapply(df, function(x) if (is.list(x)) sapply(x, paste, collapse = ";") else x),
                       stringsAsFactors = FALSE)
