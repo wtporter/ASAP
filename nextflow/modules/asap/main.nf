@@ -189,7 +189,7 @@ process PROCESS_BAM {
                               ? "--discover-roi-min-snp-perc ${params.discover_roi_min_snp_perc}" : ""
 
     """
-    newBamProcessor.py \\
+    ASAPBamProcessor.py \\
         -j ${assay_json} \\
         -b ${bamfile} \\
         -d ${params.depth} \\

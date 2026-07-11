@@ -42,7 +42,7 @@ ASAP/
 │   ├── identityFilter.py        # Percent-identity filtering of alignments
 │   ├── generateSMORbam.py       # SMOR consensus BAM generation (overlap merging)
 │   ├── generateSMORbam_correction.py  # SMOR with quality-score-driven mismatch correction
-│   ├── newBamProcessor.py       # Core BAM analysis: pileup → SNP calls → per-sample XML
+│   ├── ASAPBamProcessor.py       # Core BAM analysis: pileup → SNP calls → per-sample XML
 │   ├── outputCombiner.py        # Merge per-sample XMLs into analysis-level XML
 │   ├── formatOutput.py          # XSLT transform XML → HTML report
 │   └── outputData.py            # Minimal XML utility functions (shared helpers)
@@ -174,7 +174,7 @@ trimmer JSON, and alignment flagstats into a QC report.
 | `IDENTITY_FILTER` | `identityFilter.py` | BAM+BAI | filtered BAM+BAI, `identity_filter_stats.tsv` | `params.identity`, `params.filter_pairs` |
 | `SMOR` | `generateSMORbam.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor`, `params.fill_character` |
 | `SMOR_CORRECTION` | `generateSMORbam_correction.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor_correction`, `params.smor_correction_qual_diff_threshold`, `params.smor_correction_agreement_method` |
-| `PROCESS_BAM` | `newBamProcessor.py` | filtered BAM, original BAM, fastp JSON, stats TSVs, assay JSON, optional GenBank | `{sample_id}.xml` | `params.depth/breadth/proportion/mutation_depth/min_base_qual/consensus_proportion/fill_gaps/mark_deletions/suppress_per_base/prune_per_base/codon_correction*/discover_roi*` |
+| `PROCESS_BAM` | `ASAPBamProcessor.py` | filtered BAM, original BAM, fastp JSON, stats TSVs, assay JSON, optional GenBank | `{sample_id}.xml` | `params.depth/breadth/proportion/mutation_depth/min_base_qual/consensus_proportion/fill_gaps/mark_deletions/suppress_per_base/prune_per_base/codon_correction*/discover_roi*` |
 | `OUTPUT_COMBINER` | `outputCombiner.py` | collected XMLs | `{file_name}_analysis.xml` | `params.combine_output` |
 | `FORMAT_OUTPUT` | `formatOutput.py` | analysis XML, XSLT stylesheet | HTML report | `params.stylesheet`, `params.out_file` |
 
@@ -202,10 +202,10 @@ Package metadata: `__version__ = "1.9.0"`, author Darrin Lemmer at TGen North.
 ### `assayInfo.py`
 
 **Role**: Defines the core assay data model and provides JSON serialization/
-deserialization. Used as a library by `newBamProcessor.py` and as a CLI that
+deserialization. Used as a library by `ASAPBamProcessor.py` and as a CLI that
 converts an assay JSON to FASTA.
 
-**Library API** (consumed by `newBamProcessor.py` and `prepareJSONInput_nextflow.py`):
+**Library API** (consumed by `ASAPBamProcessor.py` and `prepareJSONInput_nextflow.py`):
 
 - `parseJSON(file_path)` → list of `Assay` objects. A custom JSON hook
   (`_json_decode`) reconstructs typed objects by pattern-matching dict keys.
@@ -218,7 +218,7 @@ converts an assay JSON to FASTA.
 gene\_name, start/end positions, reverse\_comp, amplicons), `Amplicon` (sequence,
 variant\_name, SNPs, significance, percid), `SNP` (position, reference, variant,
 name, significance), `Significance` (message, resistance string),
-`Operation`/`ITEM` (logic tree for `evaluateOperation` in `newBamProcessor.py`).
+`Operation`/`ITEM` (logic tree for `evaluateOperation` in `ASAPBamProcessor.py`).
 
 Valid `assay_type` values: `"presence/absence"`, `"SNP"`, `"gene variant"`,
 `"ROI"`, `"mixed"`. Valid `target_function` values: `"species ID"`,
@@ -229,7 +229,7 @@ Valid `assay_type` values: `"presence/absence"`, `"SNP"`, `"gene variant"`,
 ### `prepareJSONInput_nextflow.py`
 
 **Role**: Converts assay definitions from FASTA, GenBank, or Excel format into
-the ASAP JSON schema expected by `newBamProcessor.py`.
+the ASAP JSON schema expected by `ASAPBamProcessor.py`.
 
 **CLI**: `prepareJSONInput_nextflow.py -o <out.json> (-f <fasta> | -g <gb> [<gb>…] | -x <excel> [-w worksheet])`
 
@@ -254,7 +254,7 @@ corresponding sequence bases are also replaced with `'N'`. Uses
 `get_aligned_pairs()` to accurately map reference to query coordinates.
 
 **Outputs**: `primer_masking.tsv` (per-read log), `primer_masking_stats.tsv`
-(per-reference aggregate — consumed by `newBamProcessor.py` via `--primer-stats`),
+(per-reference aggregate — consumed by `ASAPBamProcessor.py` via `--primer-stats`),
 and `primer_masking_primer_stats.tsv` (per-reference **per-primer** masked-read
 counts: `ref_name, primer_name, direction, masked_reads`; includes primers that
 masked zero reads). The pipeline prepends a `sample_id` column to the last file for
@@ -274,7 +274,7 @@ MD tag). Pass 2 writes the output, marking failed reads as unmapped or (with
 `--filter-pairs`) dropping both mates of a failing pair.
 
 **Outputs**: `identity_filter_stats.tsv` (per-reference counts — consumed by
-`newBamProcessor.py` via `--identity-stats`).
+`ASAPBamProcessor.py` via `--identity-stats`).
 
 ### `generateSMORbam.py`
 
@@ -290,7 +290,7 @@ and the lower quality is retained. The result is a new synthetic read spanning
 the full fragment, with a dynamically built CIGAR list.
 
 **Outputs**: `smor_stats.tsv` (per-reference: input reads, pairs dropped,
-consensus reads, singleton reads — consumed by `newBamProcessor.py` via
+consensus reads, singleton reads — consumed by `ASAPBamProcessor.py` via
 `--smor-stats`).
 
 ### `generateSMORbam_correction.py`
@@ -341,9 +341,9 @@ and writes the result as HTML (or plain text with `-t`).
 ElementTree wrappers for pipeline-internal metadata records. Not used in the
 main analysis path.
 
-### `newBamProcessor.py` (deep reference)
+### `ASAPBamProcessor.py` (deep reference)
 
-`newBamProcessor.py` (1,634 lines, current version) is the core analysis
+`ASAPBamProcessor.py` (1,634 lines, current version) is the core analysis
 engine. Its structure:
 
 #### Pileup → SNP calling (lines 53–354)
@@ -489,7 +489,7 @@ See Section 5 for the full type table.
 
 ## 5. Per-Sample Output Schema (XML / JSON)
 
-`newBamProcessor.py` produces one XML file per sample. When
+`ASAPBamProcessor.py` produces one XML file per sample. When
 `--output-format json` is used, the XML is converted via xmltodict +
 `cast_json_output_types`.
 
@@ -547,13 +547,13 @@ but not already counted as unassigned" figure, compute
 
       <breadth>…</breadth>
       <average_depth>…</average_depth>
-      <consensus_sequence>…</consensus_sequence>         <!-- omitted if --suppress-per-base -->
+      <consensus_sequence>…</consensus_sequence>         <!-- omitted if --suppress-per-base; always full-length -->
       <gapfilled_consensus_sequence>…</gapfilled_consensus_sequence>
       <depths>pos1,pos2,…</depths>                       <!-- comma-separated -->
       <proportions>pos1,pos2,…</proportions>
       <quality_discards>pos1,pos2,…</quality_discards>
       <n_reads>pos1,pos2,…</n_reads>
-      <ref_positions>pos1,pos2,…</ref_positions>
+      <ref_positions>pos1,pos2,…</ref_positions>         <!-- genomic coord per numeric-array entry -->
     </amplicon>
     …
   </assay>
@@ -562,6 +562,24 @@ but not already counted as unassigned" figure, compute
   <operation flag="…" message="…"/>  <!-- one per triggered cross-amplicon logic rule -->
 </sample>
 ```
+
+**Per-base array modes.** The numeric position arrays (`depths`, `proportions`,
+`n_reads`, `quality_discards`) and `ref_positions` are all **index-aligned**: entry
+`i` describes genomic position `ref_positions[i]`. Two flags on `ASAPBamProcessor.py`
+control how much of this is emitted, for large/whole-genome references where the full
+arrays would otherwise blow up XML size:
+
+- **`--suppress-per-base`** (`params.suppress_per_base`, formerly `whole_genome`) — omit
+  the per-position arrays and `ref_positions` entirely. Summary/SNP records still emit.
+- **`--prune-per-base`** (`params.prune_per_base`) — retain the numeric arrays **only at
+  positions with depth ≥ `--depth`**, emitting a matching sparse `ref_positions`. The
+  `consensus_sequence`/`gapfilled_consensus_sequence` are **always kept full-length**
+  (so FASTA export and coordinate math stay valid). The threshold reuses `params.depth`.
+
+With neither flag (the default) the arrays are dense and `ref_positions` is the
+contiguous `1..amplicon_length` (offset to the assay's genomic coordinates). Downstream
+consumers must therefore key coordinates on `ref_positions`, **not** on array index —
+see §6.2.
 
 ### 5.2 JSON Type Casting (`cast_json_output_types`)
 
@@ -780,7 +798,7 @@ into a tall data frame (one row per amplicon). Columns include: sample metadata
 metadata (`assay_name`, `assay_type`, `assay_function`, `assay_gene`), amplicon
 metrics (`breadth`, `avg_depth`, `amplicon_reads`, `aligned_reads`, …), and the
 serialized position arrays as comma-delimited strings (`depths`, `proportions`,
-`quality_discards`, `n_reads`, `consensus_seq`).
+`quality_discards`, `n_reads`, `consensus_seq`, `ref_positions`).
 
 **`_read.ASAP.snps.individual.R`** parses SNP-level data into one row per SNP.
 The critical codon-merge transformation flattens the XML hierarchy: for each
@@ -805,7 +823,14 @@ the R data frame — that information is available only in the XML/JSON output.
 **Small helper functions** (`_ASAP.get.{depth,nreads,proportions,quality_discards}.R`):
 each unpacks a comma-delimited position array from the ASAP data frame into a
 tall `(run, name, assay_name, position, value)` data frame, using
-`foreach`/`doParallel` for parallelization.
+`foreach`/`doParallel` for parallelization. `position` is taken from the amplicon's
+`ref_positions` (the true genomic coordinate), falling back to a contiguous 1-based
+index only when `ref_positions` is absent or length-mismatched. This keeps the
+coverage/SNP-figure joins correct both for `--prune-per-base` sparse arrays and for
+assays whose target does not start at position 1. Consequently
+`process_asaptools_cov_table.R` computes coverage against the **exact reference length**
+(`nchar(consensus_seq)` for whole-reference; the gene-range length for POI) rather than
+the array row count, which would otherwise read as a constant 100% under pruning.
 
 **`process_xml.R`**: Per-sample Nextflow entry point. Invoked as
 `Rscript process_xml.R <xml_file> <min_snp> <sample_id>`. Calls both
@@ -949,7 +974,7 @@ intentional output changes) to establish the baseline.
 The `<codon_merge>` feature is the template for adding a new XML annotation
 element with a matching Nextflow parameter and R integration. The pattern is:
 
-### Python side (`newBamProcessor.py`)
+### Python side (`ASAPBamProcessor.py`)
 
 1. **Compute**: add a function `_apply_<feature>(snp_list, …)` that mutates
    SNP dicts in place (e.g. `snp['my_data'] = …`).

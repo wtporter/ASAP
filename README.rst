@@ -119,7 +119,7 @@ Pipeline Summary
              ▼                                                     ▼
    ┌──────────────────────────┐                    ┌───────────────────────────┐
    │  ASAP BAM Processing     │                    │  iVAR [optional]          │
-   │  (newBamProcessor.py)    │                    │  ─ Primer trimming        │
+   │  (ASAPBamProcessor.py)    │                    │  ─ Primer trimming        │
    │  → per-sample XML        │                    │  ─ Variant calling (.tsv) │
    └──────────────────────────┘                    │  ─ Consensus FASTA        │
              │                                     └───────────────────────────┘
@@ -394,7 +394,7 @@ toward the ends of R1 or R2.
 Step 6 — ASAP BAM Processing
 ------------------------------
 
-The core analysis step. ``newBamProcessor.py`` reads the assay JSON and the aligned
+The core analysis step. ``ASAPBamProcessor.py`` reads the assay JSON and the aligned
 (optionally masked/filtered/SMOR'd) BAM to produce a per-sample XML containing:
 
 - Aligned read counts per amplicon
@@ -430,7 +430,9 @@ The core analysis step. ``newBamProcessor.py`` reads the assay JSON and the alig
 +----------------------------------+----------+------------------------------------------------------------+
 | ``--mark_deletions``             | ``_``    | Character written at deletion positions in consensus       |
 +----------------------------------+----------+------------------------------------------------------------+
-| ``--whole_genome``               | ``false``| Skip per-sample consensus/depth arrays (WGS references)    |
+| ``--suppress_per_base``          | ``false``| Suppress all per-position arrays (see --prune_per_base)    |
++----------------------------------+----------+------------------------------------------------------------+
+| ``--prune_per_base``             | ``false``| Retain per-position arrays only where depth >= --depth     |
 +----------------------------------+----------+------------------------------------------------------------+
 | ``--asap_snps``                  | ``true`` | Enable ASAP BAM processing (set ``false`` to skip)         |
 +----------------------------------+----------+------------------------------------------------------------+

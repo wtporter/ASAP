@@ -205,7 +205,7 @@ safe_plot("Alignment Summary", {
     distinct() %>%
     mutate(
       across(c(total_reads, trimmed_reads, mapped_reads, unassigned_reads, unmapped_reads), as.numeric),
-      # unmapped_reads (pysam .unmapped, from newBamProcessor.py) is the TOTAL unmapped
+      # unmapped_reads (pysam .unmapped, from ASAPBamProcessor.py) is the TOTAL unmapped
       # count; unassigned_reads (pysam .nocoordinate) is the subset with no alignment
       # coordinate at all (neither mate mapped anywhere) -- already included inside
       # unmapped_reads, not a separate pool. Subtract it back out so the two are

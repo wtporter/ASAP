@@ -1048,8 +1048,8 @@ USAGE
     except Exception as e:
         if DEBUG or TESTRUN:
             raise(e)
-        indent = len("newBamProcessor") * " "
-        sys.stderr.write("newBamProcessor: " + repr(e) + "\n")
+        indent = len("ASAPBamProcessor") * " "
+        sys.stderr.write("ASAPBamProcessor: " + repr(e) + "\n")
         sys.stderr.write(indent + "  for help use --help")
         logging.info("An Exception Occured! "+str(e))
         return 2
@@ -1175,7 +1175,7 @@ if __name__ == "__main__":
     if PROFILE:
         import cProfile
         import pstats
-        profile_filename = 'asap.newBamProcessor_profile.txt'
+        profile_filename = 'asap.ASAPBamProcessor_profile.txt'
         cProfile.run('main()', profile_filename)
         statsfile = open("profile_stats.txt", "wb")
         p = pstats.Stats(profile_filename, stream=statsfile)

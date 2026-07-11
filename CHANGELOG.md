@@ -13,6 +13,16 @@ base qualities are combined is configurable.
   prefix and lives under the **SMOR Processing Options** group. **Breaking:**
   update any command line / config that passes `--qual_diff_threshold`. The
   default (`10`) and the script's `-q` flag are unchanged.
+- **Renamed `asap/newBamProcessor.py` → `asap/ASAPBamProcessor.py`** (and the
+  `nextflow/bin/` symlink) for a consistent, self-descriptive name. Internal
+  references updated: the `PROCESS_BAM` process invocation, the `asap.*` imports in
+  the Python tests, and the docs. No behavioral change. The unintegrated
+  `fasterBamProcessor.py` sibling is untouched.
+- **Renamed the `whole_genome` parameter → `suppress_per_base`** (CLI
+  `--suppress-per-base`). The flag never described the reference — it suppresses the
+  per-position output arrays (`consensus`, `depths`, `proportions`, `n_reads`,
+  `ref_positions`) so large/whole-genome references don't blow up XML size. The new
+  name says what it does. **Breaking:** update any config/CLI passing `whole_genome`.
 
 ### Added
 
@@ -21,6 +31,21 @@ base qualities are combined is configurable.
   position during SMOR correction (`generateSMORbam_correction.py -a`):
   `sum` = `min(q1+q2, 60)` (the previous fixed behavior), `max` = `max(q1, q2)`.
   The default preserves existing output.
+- **`prune_per_base`** (`--prune-per-base`, default `false`) — a hybrid alternative
+  to `suppress_per_base` for large/whole-genome references. Instead of dropping
+  **all** per-base data, it retains the per-position numeric arrays (`depths`,
+  `proportions`, `n_reads`, `quality_discards`) **only at positions with depth ≥
+  `depth`**, and emits a matching sparse `ref_positions`; the `consensus_sequence`
+  stays full-length so FASTA export is unaffected. This keeps the per-base data that
+  asaptools coverage tables and QC/SNP figures need while shrinking output on
+  references where most positions have ~zero coverage. Coexists with
+  `suppress_per_base` (which still drops everything); the threshold reuses `depth`.
+  **asaptools coordinate-awareness:** the R array extractors now derive genomic
+  `position` from `ref_positions` (with a contiguous fallback) instead of assuming
+  arrays start at position 1 — a correctness fix for offset assays as well — and the
+  coverage table now uses the **exact reference length** (`nchar(consensus_sequence)`
+  whole-reference; gene-range length for POI) as the denominator so pruned runs
+  report true coverage instead of a constant 100%.
 
 ### Fixed
 
@@ -70,7 +95,7 @@ documents the architecture and per-sample output schema.
 | **GenBank CDS parsing** | New `genbank_cds.py` — CDS/allele-linkage logic extracted to a dedicated, testable module. |
 | **Identity filtering** | `identityFilter.py`: pair-aware percent-identity filtering. Params: `filter_pairs`. |
 | **SMOR consensus** | `generateSMORbam*.py`: configurable consensus-correction quality threshold. Param: `qual_diff_threshold` (renamed to `smor_correction_qual_diff_threshold` in the current dev cycle). |
-| **BAM processing** | `newBamProcessor.py` reworked to emit the richer per-amplicon funnel + SNP metrics. `fasterBamProcessor.py` is an **experimental, unintegrated** performance rewrite — committed for reference only; it is not wired into the pipeline (nothing imports or invokes it) because it was not reliably faster. `newBamProcessor.py` remains the active processor. |
+| **BAM processing** | `ASAPBamProcessor.py` (formerly `newBamProcessor.py`) reworked to emit the richer per-amplicon funnel + SNP metrics. `fasterBamProcessor.py` is an **experimental, unintegrated** performance rewrite — committed for reference only; it is not wired into the pipeline (nothing imports or invokes it) because it was not reliably faster. `ASAPBamProcessor.py` remains the active processor. |
 | **SNP metrics** | Per-base quality stats (mean/median/min/max) and read-strand distribution (R1/R2/SE) now in the XML and parsed downstream. |
 | **ROI discovery** | Optional read-level variant / region-of-interest discovery. Params: `discover_roi`, `discover_roi_min_perc`, `discover_roi_min_reads`, `discover_roi_min_snp_perc`. |
 | **Primer masking** | `maskPrimers.py`: now also emits an explicit **`removed_reads`** column (reads actually dropped — non-zero only with `--primer-only`), so read-loss is tracked, not inferred. |

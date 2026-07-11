@@ -13,7 +13,7 @@ import pysam
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from asap.newBamProcessor import _process_pileup
+from asap.ASAPBamProcessor import _process_pileup
 from asap.assayInfo import Amplicon, SNP, Significance
 
 REF_LEN = 20

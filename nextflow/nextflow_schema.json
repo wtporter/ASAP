@@ -68,7 +68,7 @@
     "bam_processor_options": {
       "title": "bam_processor Specific Options and JSON generation",
       "properties": {
-        "asap_snps": { "type": "boolean", "default": true, "description": "Enable ASAP BAM processing (newBamProcessor.py). Set to `false` to skip SNP/consensus profiling." },
+        "asap_snps": { "type": "boolean", "default": true, "description": "Enable ASAP BAM processing (ASAPBamProcessor.py). Set to `false` to skip SNP/consensus profiling." },
         "breadth": { "type": "number", "default": 0.8, "description": "Minimum breadth of coverage required to consider an amplicon as present" },
         "mutation_depth": { "type": "integer", "default": 5, "description": "Minimum number of reads required to call a mutation at a given locus." },
         "fill_character": { "type": "string", "default": "N", "description": "Character to use for filling gaps." },
