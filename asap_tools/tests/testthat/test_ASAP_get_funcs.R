@@ -10,14 +10,18 @@ for (f in c("_ASAP.get.depth.R", "_ASAP.get.nreads.R",
   source(file.path(.functions_dir, f))
 }
 
-# Minimal read.ASAP.individual-shaped row for testing
+# Minimal read.ASAP.individual-shaped row for testing.
+# ref_positions carries the genomic coordinate for each array entry (emitted 1:1 with the arrays,
+# sparse under --prune-per-base). When it is length-matched to an array the extractor uses it for
+# `position`; otherwise it falls back to a contiguous 1-based index.
 make_asap_row <- function(run = "RUN1", name = "SAMPLE1", assay_name = "TB_rpoB",
                            depths = "100,200,300",
                            proportions = "0.95,0.98,0.97",
                            n_reads = "50,60,70",
-                           quality_discards = "1,0,2") {
+                           quality_discards = "1,0,2",
+                           ref_positions = "1,2,3") {
   data.frame(run, name, assay_name, depths, proportions,
-             n_reads, quality_discards, stringsAsFactors = FALSE)
+             n_reads, quality_discards, ref_positions, stringsAsFactors = FALSE)
 }
 
 # ---------------------------------------------------------------------------
@@ -76,6 +80,40 @@ test_that("ASAP.get.depth propagates run, name, assay_name to all rows", {
   expect_true(all(result$run == "R1"))
   expect_true(all(result$name == "S1"))
   expect_true(all(result$assay_name == "GENE"))
+})
+
+test_that("ASAP.get.depth uses ref_positions as the genomic coordinate (sparse/--prune-per-base)", {
+  # Pruned output: 3 covered positions scattered across the reference. position must be the
+  # genomic coordinate from ref_positions, NOT a contiguous 1..3 index.
+  result <- ASAP.get.depth(make_asap_row(depths = "100,150,200",
+                                          ref_positions = "500,1200,4400"))
+  expect_equal(result$position, c(500, 1200, 4400))
+  expect_equal(result$depth, c(100, 150, 200))
+})
+
+test_that("ASAP.get.depth uses ref_positions with a non-1 genomic offset", {
+  # Targeted assay whose reference starts at position 761101 (contiguous, but offset from 1).
+  result <- ASAP.get.depth(make_asap_row(depths = "10,20,30",
+                                          ref_positions = "761101,761102,761103"))
+  expect_equal(result$position, c(761101, 761102, 761103))
+})
+
+test_that("ASAP.get.depth falls back to a 1-based index when ref_positions is absent", {
+  row <- make_asap_row(depths = "10,20,30")
+  row$ref_positions <- NULL   # e.g. Rdata predating --prune-per-base
+  result <- ASAP.get.depth(row)
+  expect_equal(result$position, c(1, 2, 3))
+})
+
+test_that("ASAP.get.depth falls back when ref_positions length mismatches the array", {
+  result <- ASAP.get.depth(make_asap_row(depths = "10,20,30,40", ref_positions = "1,2,3"))
+  expect_equal(result$position, c(1, 2, 3, 4))
+})
+
+test_that("ASAP.get.proportions uses ref_positions as the genomic coordinate", {
+  result <- ASAP.get.proportions(make_asap_row(proportions = "0.9,0.8",
+                                                ref_positions = "500,4400"))
+  expect_equal(result$position, c(500, 4400))
 })
 
 # ---------------------------------------------------------------------------

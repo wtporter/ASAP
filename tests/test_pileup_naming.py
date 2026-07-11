@@ -66,10 +66,13 @@ def snp_pileup(tmp_path):
     samdata.close()
 
 
-def _run_pileup(pileup, amplicon):
+def _run_pileup(pileup, amplicon, depth=1, prune_per_base=False, ref_positions=None):
+    if ref_positions is None:
+        ref_positions = list(range(1, REF_LEN + 1))
     return _process_pileup(
         pileup, amplicon,
-        depth=1, proportion=0.05, mutdepth=1, offset=0, wholegenome=False,
+        depth=depth, proportion=0.05, mutdepth=1, offset=0, suppress_per_base=False,
+        prune_per_base=prune_per_base, ref_positions=ref_positions,
         base_qual=20, con_prop=0.5, fill_gap_char="false", fill_del_char="false",
         n_read_array=[0] * REF_LEN,
     )
@@ -102,3 +105,54 @@ def test_position_zero_wildcard_overrides_de_novo_name(snp_pileup):
     assert len(snps) == 1
     assert snps[0]['name'] == "position of interest"
     assert snps[0]['significance'].message == "position of interest"
+
+
+# ---------------------------------------------------------------------------
+# --prune-per-base: retain per-base arrays only where depth >= threshold
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def partial_pileup(tmp_path):
+    """8 reads covering only the first 10 of the 20 amplicon positions (all "A").
+    Positions 1-10 have depth 8; positions 11-20 have no coverage (depth 0)."""
+    reads = [_make_read(f"p{i}", "A" * 10, 0) for i in range(8)]
+    raw = str(tmp_path / "partial.bam")
+    with pysam.AlignmentFile(raw, "wb", header=HEADER) as bam:
+        for r in reads:
+            bam.write(r)
+    sorted_bam = raw + ".sorted.bam"
+    pysam.sort("-o", sorted_bam, raw)
+    pysam.index(sorted_bam)
+    samdata = pysam.AlignmentFile(sorted_bam, "rb")
+    pileup = samdata.pileup(REF_NAME, max_depth=10000000, ignore_orphans=False, ignore_overlaps=False)
+    yield pileup
+    samdata.close()
+
+
+def test_prune_per_base_sparsifies_numeric_arrays(partial_pileup):
+    """With prune_per_base, only positions with depth >= threshold are emitted, the numeric
+    arrays and ref_positions stay mutually equal-length, and ref_positions carries the true
+    genomic coordinate (here the covered region is positions 1-10)."""
+    amplicon = Amplicon(AMPLICON_SEQ)
+    d = _run_pileup(partial_pileup, amplicon, depth=5, prune_per_base=True)
+
+    depths = d['depths'].split(',')
+    ref_positions = d['ref_positions'].split(',')
+    proportions = d['proportions'].split(',')
+    n_reads = d['n_reads'].split(',')
+
+    assert all(int(x) >= 5 for x in depths)                       # every kept position passes
+    assert len(depths) == len(ref_positions) == len(proportions) == len(n_reads)
+    assert ref_positions == [str(i) for i in range(1, 11)]        # positions 1-10 kept, 11-20 dropped
+
+
+def test_no_prune_keeps_all_positions(partial_pileup):
+    """Without prune_per_base the arrays stay full-length (one entry per amplicon position),
+    including the zero-coverage tail, and ref_positions spans 1..REF_LEN."""
+    amplicon = Amplicon(AMPLICON_SEQ)
+    d = _run_pileup(partial_pileup, amplicon, depth=5, prune_per_base=False)
+
+    depths = d['depths'].split(',')
+    ref_positions = d['ref_positions'].split(',')
+    assert len(depths) == REF_LEN
+    assert ref_positions == [str(i) for i in range(1, REF_LEN + 1)]

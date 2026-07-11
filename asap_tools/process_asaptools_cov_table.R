@@ -35,15 +35,18 @@ load(rdata_input) # Loads final_asap, final_snps, final_array
 if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
   message("No Positions of Interest provided. Generating Whole-Reference coverage summary.")
 
-  array_info <- final_array
-
-  Amplicon_Coverage <- array_info %>%
+  # Denominator = exact reference length from the full-length consensus sequence in final_asap.
+  # The consensus stays full-length even when --prune-per-base sparsifies the numeric arrays, so
+  # counting final_array rows (n()) would otherwise collapse Coverage to ~100% for pruned runs.
+  ref_lengths <- final_asap %>%
+    filter(consensus_seq != "No Consensus Sequence") %>%
     group_by(name, assay_name) %>%
-    summarise(
-      total_bp = n(),
-      n_cov = sum(depth >= min_depth, na.rm = TRUE),
-      .groups = 'drop'
-    ) %>%
+    summarise(total_bp = sum(nchar(consensus_seq)), .groups = 'drop')
+
+  Amplicon_Coverage <- final_array %>%
+    group_by(name, assay_name) %>%
+    summarise(n_cov = sum(depth >= min_depth, na.rm = TRUE), .groups = 'drop') %>%
+    left_join(ref_lengths, by = c("name", "assay_name")) %>%
     mutate(Coverage = round(100 * (n_cov / total_bp), 2)) %>%
     select(name, assay_name, Coverage) %>%
     pivot_wider(names_from = assay_name, values_from = Coverage)
@@ -78,8 +81,16 @@ if (is.na(poi_csv) || poi_csv == "NULL" || poi_csv == "") {
     ))
   }
 
-  array_info <- left_join(final_array, Gene_Positions, by = c("position", "assay_name")) %>%
-    filter(!is.na(gene)) # Only keep positions that fall within our defined ranges
+  # Build a full (sample x gene-position) grid so every gene position is counted in the denominator
+  # even when --prune-per-base drops uncovered positions from final_array (n() over the sparse array
+  # would otherwise undercount total_bp and inflate Coverage). Scoped to the sample/assay pairs
+  # actually present so samples that lack an assay aren't invented; depth is NA where the sample has
+  # no coverage at a gene position, so it correctly counts as uncovered.
+  sample_assays <- final_array %>% distinct(run, name, assay_name)
+  array_info <- sample_assays %>%
+    left_join(Gene_Positions, by = "assay_name", relationship = "many-to-many") %>%
+    filter(!is.na(gene)) %>%
+    left_join(final_array, by = c("run", "name", "assay_name", "position"))
 
   Assay_Coverage <- array_info %>%
     group_by(name, assay_name) %>%

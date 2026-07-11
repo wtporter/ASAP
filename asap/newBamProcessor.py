@@ -130,7 +130,7 @@ def _get_n_counts(pileup_iterator, amplicon_length):
 
     return n_read_array
 
-def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, wholegenome, base_qual, con_prop, fill_gap_char, fill_del_char, n_read_array):
+def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, suppress_per_base, prune_per_base, ref_positions, base_qual, con_prop, fill_gap_char, fill_del_char, n_read_array):
     global low_level_cutoff, high_level_cutoff
     pileup_dict = {}
     snp_dict = _create_snp_dict(amplicon)
@@ -330,15 +330,27 @@ def _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, whole
         for (name, reference, variant, significance) in snp_dict[position]:
             snp = {'name':name, 'position':str(position), 'depth':str(0), 'reference':reference, 'variant':variant}
             snp_list.append(snp)
-    if not wholegenome: #If reference is whole genome, none of these are going to make sense, and they will make the output too large
-        pileup_dict['consensus_sequence'] = consensus_seq
+    if not suppress_per_base: #Per-base arrays are suppressed for large/whole-genome references: they wouldn't be meaningful and would make the output too large
+        # When pruning, retain only positions with depth >= the depth threshold; otherwise keep every position.
+        # The numeric arrays and ref_positions are filtered by the same kept-index set so they stay mutually
+        # index-aligned, and ref_positions carries the genomic coordinate for each kept index (asaptools keys on it).
+        if prune_per_base:
+            kept = [i for i in range(amplicon_length) if depth_array[i] >= depth]
+        else:
+            kept = range(amplicon_length)
+        # ref_positions must be 1:1 with the per-position arrays; derive from the amplicon's genomic
+        # offset if a caller ever passes a mismatched (or missing) coordinate list.
+        if not ref_positions or len(ref_positions) != amplicon_length:
+            ref_positions = list(range(offset + 1, offset + amplicon_length + 1))
+        pileup_dict['consensus_sequence'] = consensus_seq #kept full-length/contiguous so FASTA export stays valid
         pileup_dict['gapfilled_consensus_sequence'] = gapfilled_consensus_seq #TP added
         # if fill_gap_char: #TP removed...
         #     pileup_dict['gapfilled_consensus_sequence'] = gapfilled_consensus_seq
-        pileup_dict['depths'] = ",".join(str(n) for n in depth_array)
-        pileup_dict['proportions'] = ",".join(prop_array)
-        pileup_dict['n_reads'] = ",".join(str(n) for n in n_read_array)
-        pileup_dict['quality_discards'] = ",".join(str(n) for n in quality_discard_array)
+        pileup_dict['depths'] = ",".join(str(depth_array[i]) for i in kept)
+        pileup_dict['proportions'] = ",".join(prop_array[i] for i in kept)
+        pileup_dict['n_reads'] = ",".join(str(n_read_array[i]) for i in kept)
+        pileup_dict['quality_discards'] = ",".join(str(quality_discard_array[i]) for i in kept)
+        pileup_dict['ref_positions'] = ",".join(str(ref_positions[i]) for i in kept)
     pileup_dict['breadth'] = str(breadth_positions/amplicon_length * 100)
     pileup_dict['SNPs'] = snp_list
     pileup_dict['average_depth'] = str(avg_depth_total/avg_depth_positions) if avg_depth_positions else "0"
@@ -690,7 +702,8 @@ USAGE
         parser.add_argument("-m", "--mutation-depth", dest="mutdepth", default=5, type=int, help="minimum number of reads required to call a mutation at a given locus. [default: 5]")
         parser.add_argument("-V", "--version", action="version", version=program_version_message)
         parser.add_argument("-D", "--debug", action="store_true", default=False, help="write <sample_name>.log file with debugging information")
-        parser.add_argument("-w", "--whole-genome", action="store_true", dest="wholegenome", default=False, help="JSON file uses a whole genome reference, so don't write out the consensus, depth, and proportion arrays for each sample")
+        parser.add_argument("-s", "--suppress-per-base", action="store_true", dest="suppress_per_base", default=False, help="Suppress the per-position output arrays (consensus, gapfilled_consensus, depths, proportions, n_reads, ref_positions) in each sample's XML. Set for large/whole-genome references to keep XML sizes manageable.")
+        parser.add_argument("--prune-per-base", action="store_true", dest="prune_per_base", default=False, help="Prune the per-position numeric arrays (depths, proportions, n_reads, quality_discards) to only positions with depth >= --depth, and emit a matching sparse ref_positions. The consensus sequence is kept full-length. Shrinks output for large/whole-genome references while retaining per-base data at covered positions. Ignored when --suppress-per-base is set.")
         parser.add_argument("--allele-output-threshold", dest="allele_min_reads", default=8, type=int, help="cutoff of # of reads below which allels for amino acids and nucleotide alleles will not be output [default: 8]")
         parser.add_argument('-o', '--out', metavar="FILE", type=argparse.FileType('w'), default=sys.stdout, help="output filename [default: stdout]")
         parser.add_argument("--output-format", type=str.lower, choices=('xml', 'json'), default='xml', help="output format [default: xml]")
@@ -726,7 +739,8 @@ USAGE
         mutdepth = args.mutdepth
         debug = args.debug
         allele_min_reads = args.allele_min_reads
-        wholegenome = args.wholegenome
+        suppress_per_base = args.suppress_per_base
+        prune_per_base = args.prune_per_base
         base_qual = args.bqual
         con_prop = args.consensus_proportion
         fill_gap_char = args.gap_char
@@ -944,7 +958,7 @@ USAGE
                     # First, run the N-counting function to get the N-read array.
                     n_read_array = _get_n_counts(pileup_for_n_counting, amplicon_length)
                     pileup = samdata.pileup(ref_name, max_depth=10000000, ignore_orphans=False, ignore_overlaps=False)
-                    amplicon_data = _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, wholegenome, base_qual, con_prop, fill_gap_char, fill_del_char, n_read_array)
+                    amplicon_data = _process_pileup(pileup, amplicon, depth, proportion, mutdepth, offset, suppress_per_base, prune_per_base, ref_positions, base_qual, con_prop, fill_gap_char, fill_del_char, n_read_array)
                     if float(amplicon_data['breadth']) < breadth*100:
                         significance_node = amplicon_node.find("significance")
                         if significance_node is None:
@@ -1002,9 +1016,6 @@ USAGE
                             _add_linked_snps_node(snp_node, snp['linked_snps'], snp['name'])
                     del amplicon_data['SNPs']
                     _write_parameters(amplicon_node, amplicon_data)
-                    if not wholegenome:
-                        ref_positions_node = ElementTree.SubElement(amplicon_node, "ref_positions")
-                        ref_positions_node.text = ",".join(str(n) for n in ref_positions)
                 if temp_file and REMOVE_TEMP:
                     samdata.close()
                     os.remove(temp_file)

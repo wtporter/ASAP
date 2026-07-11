@@ -16,9 +16,12 @@ ASAP.get.quality.discards <- function(read.ASAP.df, num_cores = 1) {
     name             <- read.ASAP.df$name[[i]]
     assay_name       <- read.ASAP.df$assay_name[[i]]
     quality_discards <- read.ASAP.df$quality_discards[[i]]
+    ref_pos          <- if ("ref_positions" %in% names(read.ASAP.df)) read.ASAP.df$ref_positions[[i]] else NA_character_
 
     quality_discards <- as.numeric(unlist(strsplit(quality_discards, ",")))
-    position         <- seq_along(quality_discards)
+    position         <- as.numeric(unlist(strsplit(ref_pos, ",")))
+    # Fall back to a contiguous 1-based index if ref_positions is absent/mismatched.
+    if (length(position) != length(quality_discards)) position <- seq_along(quality_discards)
 
     data.frame(run, name, assay_name, position, quality_discards)
   }

@@ -63,7 +63,11 @@ read.ASAP.individual <- function(XML, run_name = "Individual_XML_processing") {
         depths           = get_node_text(Amplicon_Node, "depths", "No Depth"),
         proportions      = get_node_text(Amplicon_Node, "proportions", "No Proportions"),
         quality_discards = get_node_text(Amplicon_Node, "quality_discards", "No QC Analysis"),
-        n_reads          = get_node_text(Amplicon_Node, "n_reads", "No QC Analysis")
+        n_reads          = get_node_text(Amplicon_Node, "n_reads", "No QC Analysis"),
+        # Genomic coordinate for each per-position array entry. Emitted 1:1 with the numeric
+        # arrays (sparse when --prune-per-base is set); the array extractors key `position` on this
+        # instead of assuming the arrays are contiguous from position 1.
+        ref_positions    = get_node_text(Amplicon_Node, "ref_positions", "No Ref Positions")
       )
 
       Temp <- cbind(Run_Info, Sample_Info, Assay_Info, Amplicon_Info)

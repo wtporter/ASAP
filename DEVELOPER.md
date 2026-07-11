@@ -174,7 +174,7 @@ trimmer JSON, and alignment flagstats into a QC report.
 | `IDENTITY_FILTER` | `identityFilter.py` | BAM+BAI | filtered BAM+BAI, `identity_filter_stats.tsv` | `params.identity`, `params.filter_pairs` |
 | `SMOR` | `generateSMORbam.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor`, `params.fill_character` |
 | `SMOR_CORRECTION` | `generateSMORbam_correction.py` | BAM+BAI | SMOR BAM+BAI, `smor_stats.tsv` | `params.smor_correction`, `params.smor_correction_qual_diff_threshold`, `params.smor_correction_agreement_method` |
-| `PROCESS_BAM` | `newBamProcessor.py` | filtered BAM, original BAM, fastp JSON, stats TSVs, assay JSON, optional GenBank | `{sample_id}.xml` | `params.depth/breadth/proportion/mutation_depth/min_base_qual/consensus_proportion/fill_gaps/mark_deletions/whole_genome/codon_correction*/discover_roi*` |
+| `PROCESS_BAM` | `newBamProcessor.py` | filtered BAM, original BAM, fastp JSON, stats TSVs, assay JSON, optional GenBank | `{sample_id}.xml` | `params.depth/breadth/proportion/mutation_depth/min_base_qual/consensus_proportion/fill_gaps/mark_deletions/suppress_per_base/prune_per_base/codon_correction*/discover_roi*` |
 | `OUTPUT_COMBINER` | `outputCombiner.py` | collected XMLs | `{file_name}_analysis.xml` | `params.combine_output` |
 | `FORMAT_OUTPUT` | `formatOutput.py` | analysis XML, XSLT stylesheet | HTML report | `params.stylesheet`, `params.out_file` |
 
@@ -547,7 +547,7 @@ but not already counted as unassigned" figure, compute
 
       <breadth>…</breadth>
       <average_depth>…</average_depth>
-      <consensus_sequence>…</consensus_sequence>         <!-- omitted if --whole-genome -->
+      <consensus_sequence>…</consensus_sequence>         <!-- omitted if --suppress-per-base -->
       <gapfilled_consensus_sequence>…</gapfilled_consensus_sequence>
       <depths>pos1,pos2,…</depths>                       <!-- comma-separated -->
       <proportions>pos1,pos2,…</proportions>

@@ -16,9 +16,14 @@ ASAP.get.depth <- function(read.ASAP.df, num_cores = 1) {
     name       <- read.ASAP.df$name[[i]]
     assay_name <- read.ASAP.df$assay_name[[i]]
     depth      <- read.ASAP.df$depths[[i]]
+    ref_pos    <- if ("ref_positions" %in% names(read.ASAP.df)) read.ASAP.df$ref_positions[[i]] else NA_character_
 
     depth    <- as.numeric(unlist(strsplit(depth, ",")))
-    position <- seq_along(depth)
+    position <- as.numeric(unlist(strsplit(ref_pos, ",")))
+    # Fall back to a contiguous 1-based index if ref_positions is absent/mismatched
+    # (e.g. XML predating --prune-per-base). With ref_positions present this is the
+    # true genomic coordinate and stays correct when arrays are sparse.
+    if (length(position) != length(depth)) position <- seq_along(depth)
 
     data.frame(run, name, assay_name, position, depth)
   }

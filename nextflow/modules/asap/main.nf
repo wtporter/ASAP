@@ -169,7 +169,8 @@ process PROCESS_BAM {
     tuple val(sample_id), path("${sample_id}.xml"), emit: xml_output
 
     script:
-    def wg_flag = params.whole_genome ? "--whole-genome" : ""
+    def wg_flag = params.suppress_per_base ? "--suppress-per-base" : ""
+    def prune_flag = params.prune_per_base ? "--prune-per-base" : ""
     def primer_flag   = primer_stats.size()   > 0 ? "--primer-stats ${primer_stats}"     : ""
     def identity_flag = identity_stats.size() > 0 ? "--identity-stats ${identity_stats}" : ""
     def smor_flag     = smor_stats.size()     > 0 ? "--smor-stats ${smor_stats}"         : ""
@@ -205,6 +206,7 @@ process PROCESS_BAM {
         ${identity_flag} \\
         ${smor_flag} \\
         ${wg_flag} \\
+        ${prune_flag} \\
         ${codon_flag} \\
         ${codon_gb_flag} \\
         ${codon_err_flag} \\
