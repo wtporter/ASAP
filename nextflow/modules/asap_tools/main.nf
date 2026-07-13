@@ -165,9 +165,9 @@ process PROCESS_GENERATE_SNP_TABLE {
     path combined_rdata
     val  prefix
     path "genbank_input/*"
-    path primer_bed
+    path primer_bed, stageAs: 'primer_bed_input/*'
     val  poi_input
-    path aa_rdata
+    path aa_rdata, stageAs: 'aa_rdata_input/*'
 
     output:
     path "*.xlsx", emit: xlsx, optional: true
