@@ -31,7 +31,7 @@ POI_CSV            <- args[7]
 BED_FILE           <- args[8]
 SNP_RDATA          <- args[9]
 SNP_XLS            <- args[10]
-GB_FILES           <- args[11:length(args)]
+GB_FILES           <- if (length(args) >= 11) args[11:length(args)] else character(0)
 
 # RDATA_INPUT        <- "/scratch/tporter/ASAP_RSV_Results/work/eb/34919aa89a69685f5f8ec49607d67f/Combined_ASAP_Data.Rdata"
 # PREFIX             <- "RSV_Test"
@@ -53,7 +53,7 @@ SNPS <- final_snps
 array_info <- final_array
 
 # --- Handle Flexible Reference List ---
-all_gb_paths <- c()
+all_gb_paths <- character(0)
 
 for (path in GB_FILES) {
   if (dir.exists(path)) {
