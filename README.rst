@@ -228,10 +228,10 @@ every tuning parameter.
    * - Goal
      - Key parameter(s)
    * - Remove primer bases from aligned reads
-     - ``--primer_file <bed|csv>`` ``--mask_primers``
+     - ``--primer_file <bed|csv>`` (masking auto-enables)
    * - Keep only primer-overlapping reads
      - ``--primer_only``
-   * - Exclude off-target / near-neighbor reads
+   * - Identity Filter (Exclude off-target / near-neighbor reads)
      - ``--identity 0.97``
    * - Resolve low-frequency variants (Illumina overlap)
      - ``--smor_correction`` (or ``--smor`` for full-overlap assays)
@@ -239,8 +239,9 @@ every tuning parameter.
      - ``--proportion`` ``--mutation_depth`` ``--depth``
    * - Call variants and consensus with iVar
      - ``--ivar``
-   * - Annotate amino-acid changes
-     - use a GenBank reference (or ``--asaptools_genbank_location``)
+   * - Annotate amino-acid changes (needs GenBank)
+     - a GenBank ``--reference_input``, or ``--asaptools_genbank_location`` for
+       non-GenBank references
    * - Annotate positions of interest
      - ``--asaptools_positions_of_interest <csv>``
    * - Link same-codon SNPs / phase SNPs onto reads
@@ -468,7 +469,7 @@ Contact
 | W. Tanner Porter — tporter@tgen.org
 
 Issues and feature requests:
-https://github.com/TGenNorth/ASAP/issues
+https://github.com/wtporter/ASAP
 
 ----
 
