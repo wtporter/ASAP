@@ -57,7 +57,9 @@ Quick Start
 
 Singularity containers and all per-step Conda environments are resolved automatically on
 first run — no further setup required. The **nf-schema** plugin is downloaded on first run.
-See Requirements_ for supported platforms and pinned tool versions.
+See Requirements_ for supported platforms and pinned tool versions, and
+`docs/INSTALLATION.rst <docs/INSTALLATION.rst>`_ for detailed setup (HPC/SLURM, shared
+environment caches, and troubleshooting).
 
 **2. Run** — a minimal Illumina + GenBank analysis on SLURM:
 
@@ -208,6 +210,47 @@ ASAP accepts four reference formats via ``--reference_input``:
 
 All non-JSON formats are converted to an internal JSON assay description by
 ``prepareJSONInput_nextflow.py`` before processing.
+
+----
+
+Common Tasks
+============
+
+The most-used ASAP features and the parameters that switch them on. Each is optional and
+off (or at its default) unless set, and they combine freely — see Examples_ for full
+commands and `docs/PIPELINE_STEPS.rst <docs/PIPELINE_STEPS.rst>`_ for what each does and
+every tuning parameter.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 56
+
+   * - Goal
+     - Key parameter(s)
+   * - Remove primer bases from aligned reads
+     - ``--primer_file <bed|csv>`` ``--mask_primers``
+   * - Keep only primer-overlapping reads
+     - ``--primer_only``
+   * - Exclude off-target / near-neighbor reads
+     - ``--identity 0.97``
+   * - Resolve low-frequency variants (Illumina overlap)
+     - ``--smor_correction`` (or ``--smor`` for full-overlap assays)
+   * - Tune SNP / iSNV calling
+     - ``--proportion`` ``--mutation_depth`` ``--depth``
+   * - Call variants and consensus with iVar
+     - ``--ivar``
+   * - Annotate amino-acid changes
+     - use a GenBank reference (or ``--asaptools_genbank_location``)
+   * - Annotate positions of interest
+     - ``--asaptools_positions_of_interest <csv>``
+   * - Link same-codon SNPs / phase SNPs onto reads
+     - ``--codon_correction`` / ``--discover_roi``
+   * - Combine per-sample results into one HTML report
+     - ``--combine_output``
+   * - Analyze long reads (ONT / PacBio)
+     - ``--technology ont`` (or ``pacbio``)
+   * - Skip R post-processing (XML + HTML only)
+     - ``--asaptools_processing false``
 
 ----
 
@@ -388,6 +431,8 @@ Requirements
 Documentation
 =============
 
+- `docs/INSTALLATION.rst <docs/INSTALLATION.rst>`_ — full setup guide: prerequisites,
+  execution profiles, shared environment caches, and troubleshooting.
 - `docs/PIPELINE_STEPS.rst <docs/PIPELINE_STEPS.rst>`_ — detailed per-step reference and
   the full parameter tables for every stage.
 - `docs/OUTPUTS.rst <docs/OUTPUTS.rst>`_ — complete output layout, ``.Rdata`` frames for
