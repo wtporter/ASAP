@@ -27,7 +27,8 @@
 //   ivar            – iVAR trim + variant + consensus branch
 //   asaptools       – R post-processing (PROCESS_XML_R, SNP table, cov table, etc.)
 //   combine_output  – OUTPUT_COMBINER + FORMAT_OUTPUT (XML → HTML)
-//   whole_genome    – --whole_genome mode
+//   suppress_per_base – --suppress-per-base mode
+//   prune_per_base    – --prune-per-base mode (depth-gated per-base arrays)
 
 nextflow_pipeline {
     name "ASAP Comprehensive End-to-End Tests"
@@ -485,14 +486,14 @@ nextflow_pipeline {
     }
 
     // =========================================================================
-    // 9. TB – FASTA REFERENCE INPUT + WHOLE GENOME MODE
+    // 9. TB – FASTA REFERENCE INPUT + SUPPRESS PER-BASE MODE
     // Covers: FASTA → JSON conversion via prepareJSONInput_nextflow.py,
-    //         --whole_genome flag (skips per-sample consensus/depth arrays).
+    //         --suppress-per-base flag (skips per-sample consensus/depth arrays).
     // =========================================================================
     test("TB - FASTA Reference Input, Whole Genome Mode") {
         tag "tb"
         tag "fasta_input"
-        tag "whole_genome"
+        tag "suppress_per_base"
         tag "bwa"
         tag "paired_end"
 
@@ -504,7 +505,7 @@ nextflow_pipeline {
                 aligner              = "bwa"
                 file_name            = "TB_FASTA_WGS"
                 proportion           = 0.1
-                whole_genome         = true
+                suppress_per_base    = true
                 combine_output       = false
                 asaptools_processing = false
             }
@@ -525,6 +526,70 @@ nextflow_pipeline {
 
             // Multiple samples processed
             assert path("${out}/sample_info").toFile().list().size() > 0
+        }
+    }
+
+    // =========================================================================
+    // 9b. TB – FASTA REFERENCE INPUT + PRUNE-PER-BASE MODE
+    // Covers: --prune-per-base flag (retain per-base numeric arrays only where
+    //         depth >= depth, emit a matching sparse ref_positions, keep the
+    //         consensus full-length) plus asaptools coverage-table generation on
+    //         a whole-genome reference. Verifies the arrays are sparse & aligned,
+    //         the consensus stays full-length, aggregation completes, and the
+    //         coverage report is produced.
+    // =========================================================================
+    test("TB - FASTA Reference Input, Prune Per-Base Mode") {
+        tag "tb"
+        tag "fasta_input"
+        tag "prune_per_base"
+        tag "bwa"
+        tag "paired_end"
+
+        when {
+            params {
+                read_dir             = "${baseDir}/tests/data/TB_Ampseq/"
+                reference_input      = "${baseDir}/tests/preparejson/TB_WGS_Reference.fasta"
+                outdir               = "${baseDir}/tests/test_output/TB_FASTA_WGS_Prune"
+                aligner              = "bwa"
+                file_name            = "TB_FASTA_WGS_Prune"
+                proportion           = 0.1
+                prune_per_base       = true
+                combine_output       = true
+                asaptools_processing = true
+                asaptools_cov_table  = true
+            }
+        }
+
+        then {
+            def _h = new File(outputDir).parentFile; def _l = new File(_h.parent, "09b_tb_fasta_wgs_prune"); if (java.nio.file.Files.isSymbolicLink(_l.toPath())) _l.delete(); java.nio.file.Files.createSymbolicLink(_l.toPath(), _h.toPath())
+            assert workflow.success
+
+            def out = "${baseDir}/tests/test_output/TB_FASTA_WGS_Prune"
+
+            // Per-sample XML for a representative sample
+            def sample = "TB-01gyrAorig3-123_S10_L001"
+            def xmlFile = new File("${out}/sample_info/${sample}/xml/${sample}.xml")
+            assert xmlFile.exists()
+
+            // Pull the first amplicon's per-base fields straight from the text so a huge
+            // full-length consensus node doesn't force a heavy DOM parse.
+            def xmlText   = xmlFile.text
+            def refPos    = (xmlText =~ /<ref_positions>([^<]*)<\/ref_positions>/)
+            def depthsTxt = (xmlText =~ /<depths>([^<]*)<\/depths>/)
+            def consTxt   = (xmlText =~ /<consensus_sequence>([^<]*)<\/consensus_sequence>/)
+            assert refPos.find() && depthsTxt.find() && consTxt.find()
+
+            def nRefPos = refPos.group(1).split(',').size()
+            def nDepths = depthsTxt.group(1).split(',').size()
+            def consLen = consTxt.group(1).length()
+
+            // Numeric arrays are aligned to ref_positions, and pruning made them sparse
+            // relative to the full-length consensus (whole-genome reference, few covered bases).
+            assert nDepths == nRefPos
+            assert nRefPos < consLen
+
+            // Aggregation completed without OOM and the coverage report was produced.
+            assert path("${out}/sample_reports/general_reports/TB_FASTA_WGS_Prune_Coverage_Report.xlsx").exists()
         }
     }
 

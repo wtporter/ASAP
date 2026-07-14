@@ -15,7 +15,7 @@ from xml.etree import ElementTree
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from asap.genbank_cds import CdsFeature
 from asap.allele_linkage import _apply_codon_correction, _apply_discover_roi
-from asap.newBamProcessor import _add_codon_merges_node
+from asap.ASAPBamProcessor import _add_codon_merges_node
 
 
 def _make_pos_table_3way(pos_a, pos_b, pos_c, rows):

@@ -36,7 +36,8 @@ TAGS=(
     primer_only
     smor
     excel_input
-    whole_genome
+    suppress_per_base
+    prune_per_base
     tb_json_snp_aa
 )
 NAMES=(
@@ -50,6 +51,7 @@ NAMES=(
     "TB - Full Feature Amplicon (primer masking, identity filter, SMOR, asaptools)"
     "TB - Excel Reference Input"
     "TB - FASTA Reference Input, Whole Genome Mode"
+    "TB - FASTA Reference Input, Prune Per-Base Mode"
     "TB - JSON Input, asaptools with GenBank SNP-to-AA Conversion"
 )
 

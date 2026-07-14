@@ -60,7 +60,8 @@
 #   ivar            – iVAR trim + variant + consensus branch
 #   asaptools       – R post-processing (SNP table, cov table, etc.)
 #   combine_output  – OUTPUT_COMBINER + FORMAT_OUTPUT (XML → HTML)
-#   whole_genome    – --whole_genome mode
+#   suppress_per_base – --suppress-per-base mode
+#   prune_per_base    – --prune-per-base mode (depth-gated per-base arrays)
 
 set -euo pipefail
 

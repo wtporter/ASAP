@@ -15,7 +15,7 @@ import pysam
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from asap.allele_linkage import _apply_discover_roi, _build_fragment_allele_table
-from asap.newBamProcessor import _add_linked_snps_node
+from asap.ASAPBamProcessor import _add_linked_snps_node
 
 REF_LEN = 1000
 REF_NAME = "test_ref"

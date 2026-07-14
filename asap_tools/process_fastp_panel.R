@@ -15,12 +15,15 @@ source(file.path(.functions_dir, "_shorten_sample_names.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
 
-if (length(args) < 2) {
-  stop("Usage: process_fastp_panel.R <prefix> <json1> [<json2> ...]")
+if (length(args) < 3) {
+  stop("Usage: process_fastp_panel.R <prefix> <interactive> <json1> [<json2> ...]")
 }
 
 PREFIX    <- args[1]
-json_files <- args[-1]
+# The self-contained interactive HTML widget is exported only when arg 2 is
+# TRUE. The JPG panel is always written.
+EXPORT_INTERACTIVE <- toupper(args[2]) == "TRUE"
+json_files <- args[-(1:2)]
 
 # Wraps a plot block so a single panel failure doesn't abort all others
 safe_plot <- function(label, expr) {
@@ -90,7 +93,12 @@ parse_fastp_cycles <- function(path) {
 
   map_dfr(reads, function(r) {
     quals <- d[[r$key]]$quality_curves$mean
-    if (is.null(quals)) return(NULL)
+    # fastp emits an empty array ([]) for reads with no data after filtering,
+    # which fromJSON parses as an empty list() -- not caught by is.null() and
+    # would otherwise create a list-typed mean_quality column that fails to
+    # row-bind against the numeric curves from the other reads.
+    if (is.null(quals) || length(quals) == 0) return(NULL)
+    quals <- as.numeric(quals)   # defensive: coerce any list-typed curve to numeric
     tibble(
       sample       = sample_id,
       read         = r$read,
@@ -101,8 +109,23 @@ parse_fastp_cycles <- function(path) {
   })
 }
 
-qc <- map_dfr(json_files, safely(parse_fastp_json, otherwise = NULL)) %>%
-  { bind_rows(.$result) }
+# Parse each JSON, skipping (with a warning) any file that fails, so one bad
+# file never aborts the whole panel. Note: map_dfr(files, safely(fn)) cannot be
+# used directly -- map_dfr row-binds the list(result, error) wrappers itself,
+# and a captured error condition is not a vector, which crashes bind_rows.
+parse_json_files <- function(files, fn, what) {
+  map_dfr(files, function(path) {
+    res <- safely(fn)(path)
+    if (!is.null(res$error)) {
+      message(sprintf("[WARN] %s failed for %s: %s",
+                      what, basename(path), conditionMessage(res$error)))
+      return(NULL)
+    }
+    res$result
+  })
+}
+
+qc <- parse_json_files(json_files, parse_fastp_json, "parse_fastp_json")
 
 if (nrow(qc) == 0) stop("No fastp JSON files could be parsed.")
 
@@ -135,8 +158,7 @@ scaled_ylim <- function(values) {
   c(rng[1] * 0.975, rng[2] * 1.025)
 }
 
-cycles <- map_dfr(json_files, safely(parse_fastp_cycles, otherwise = NULL)) %>%
-  { bind_rows(.$result) }
+cycles <- parse_json_files(json_files, parse_fastp_cycles, "parse_fastp_cycles")
 
 reads_data <- qc %>%
   select(sample, sample_short, Before = total_reads_before, After = total_reads_after) %>%
@@ -428,7 +450,7 @@ if (length(tiers) > 0) {
 }
 
 # --- Interactive Output (plotly subplots) ---
-tryCatch({
+if (EXPORT_INTERACTIVE) tryCatch({
   tier_interactive <- Filter(Negate(is.null), lapply(tiers, function(t) {
     ps <- lapply(t$plots, function(p) ggplotly(p, tooltip = "text") %>% partial_bundle())
     if (length(ps) == 1) return(ps[[1]])

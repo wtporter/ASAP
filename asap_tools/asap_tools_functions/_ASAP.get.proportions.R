@@ -16,9 +16,12 @@ ASAP.get.proportions <- function(read.ASAP.df, num_cores = 1) {
     name        <- read.ASAP.df$name[[i]]
     assay_name  <- read.ASAP.df$assay_name[[i]]
     proportions <- read.ASAP.df$proportions[[i]]
+    ref_pos     <- if ("ref_positions" %in% names(read.ASAP.df)) read.ASAP.df$ref_positions[[i]] else NA_character_
 
     proportions <- as.numeric(unlist(strsplit(proportions, ",")))
-    position    <- seq_along(proportions)
+    position    <- as.numeric(unlist(strsplit(ref_pos, ",")))
+    # Fall back to a contiguous 1-based index if ref_positions is absent/mismatched.
+    if (length(position) != length(proportions)) position <- seq_along(proportions)
 
     data.frame(run, name, assay_name, position, proportions)
   }

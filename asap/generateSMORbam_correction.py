@@ -14,7 +14,7 @@ import pysam
 from operator import attrgetter
 from itertools import groupby
 
-def _get_consensus(read, pair, fill_char, qual_diff_threshold):
+def _get_consensus(read, pair, fill_char, qual_diff_threshold, agreement_method="sum"):
     # Determine the total span of the fragment (Union)
     union_start = min(read.reference_start, pair.reference_start)
     union_end = max(read.reference_end, pair.reference_end)
@@ -68,9 +68,14 @@ def _get_consensus(read, pair, fill_char, qual_diff_threshold):
         if b1 and b2:
             stats['total'] += 1
             if b1 == b2:
-                # Agreement: Sum qualities (cap at 60)
+                # Agreement: combine the two base qualities per the selected method
                 consensus_seq += b1
-                consensus_qual.append(min(q1 + q2, 60))
+                if agreement_method == "max":
+                    # Take the higher of the two base qualities
+                    consensus_qual.append(max(q1, q2))
+                else:
+                    # Sum qualities (cap at 60)
+                    consensus_qual.append(min(q1 + q2, 60))
             else:
                 # Mismatch: Apply Quality-based correction
                 if q1 >= q2 + qual_diff_threshold:
@@ -101,7 +106,7 @@ def _get_consensus(read, pair, fill_char, qual_diff_threshold):
 
     return (consensus_seq, consensus_qual, cigartuples, union_start, stats)
 
-def _write_bam(samdata, out_file, fill_char, qual_diff_threshold):
+def _write_bam(samdata, out_file, fill_char, qual_diff_threshold, agreement_method="sum"):
     # Use a temporary name for sorting to avoid "file-in-use" indexing errors
     tmp_out = out_file + ".unsorted.tmp"
     outdata = pysam.AlignmentFile(tmp_out, "wb", template=samdata)
@@ -139,7 +144,7 @@ def _write_bam(samdata, out_file, fill_char, qual_diff_threshold):
                 continue
 
             try:
-                seq, qual, cigar, start, stats = _get_consensus(read, pair, fill_char, qual_diff_threshold)
+                seq, qual, cigar, start, stats = _get_consensus(read, pair, fill_char, qual_diff_threshold, agreement_method)
                 if seq:
                     new_read = pysam.AlignedSegment()
                     new_read.query_name = read.query_name
@@ -192,6 +197,9 @@ def main():
     parser.add_argument("-o", "--out", help="Output BAM file name")
     parser.add_argument("-c", "--fill-character", default="N", help="Character for ambiguous mismatches")
     parser.add_argument("-q", "--qual-diff-threshold", type=int, default=10, help="Phred quality difference required to select the higher-quality base during consensus correction (default: 10)")
+    parser.add_argument("-a", "--agreement-method", choices=["sum", "max"], default="sum",
+                        help="How to combine the two base qualities when the reads agree at a position: "
+                             "'sum' = min(q1+q2, 60) (default), 'max' = max(q1, q2)")
     # Added a logfile argument to match what Nextflow expects
     parser.add_argument("-l", "--logfile", default="smor_processing.log", help="Log file name")
     
@@ -211,7 +219,7 @@ def main():
         args.out = os.path.basename(args.bam).replace(".bam", "_SMOR.bam")
 
     with pysam.AlignmentFile(args.bam, "rb") as samdata:
-        _write_bam(samdata, args.out, args.fill_character, args.qual_diff_threshold)
+        _write_bam(samdata, args.out, args.fill_character, args.qual_diff_threshold, args.agreement_method)
         
 if __name__ == "__main__":
     main()

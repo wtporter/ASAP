@@ -51,7 +51,9 @@
       "title": "SMOR Processing Options",
       "properties": {
         "smor": { "type": "boolean", "default": false, "description": "Enable SMOR analysis." },
-        "smor_correction": { "type": "boolean", "default": false, "description": "Enable SMOR Correction analysis." }
+        "smor_correction": { "type": "boolean", "default": false, "description": "Enable SMOR Correction analysis." },
+        "smor_correction_qual_diff_threshold": { "type": "integer", "default": 10, "description": "Phred quality score difference required between paired-read bases at a mismatch position for the higher-quality base to be selected during SMOR consensus correction (generateSMORbam_correction.py -q argument). If below this threshold, the position is masked with fill_character." },
+        "smor_correction_agreement_method": { "type": "string", "default": "sum", "enum": ["sum", "max"], "description": "How SMOR consensus correction combines the two base qualities when both reads of a pair agree at a position (generateSMORbam_correction.py -a argument): 'sum' = min(q1+q2, 60) (default), 'max' = max(q1, q2)." }
       }
     },
     "variant_calling_options": {
@@ -66,17 +68,14 @@
     "bam_processor_options": {
       "title": "bam_processor Specific Options and JSON generation",
       "properties": {
-        "asap_snps": { "type": "boolean", "default": true, "description": "Enable ASAP BAM processing (newBamProcessor.py). Set to `false` to skip SNP/consensus profiling." },
+        "asap_snps": { "type": "boolean", "default": true, "description": "Enable ASAP BAM processing (ASAPBamProcessor.py). Set to `false` to skip SNP/consensus profiling." },
         "breadth": { "type": "number", "default": 0.8, "description": "Minimum breadth of coverage required to consider an amplicon as present" },
         "mutation_depth": { "type": "integer", "default": 5, "description": "Minimum number of reads required to call a mutation at a given locus." },
         "fill_character": { "type": "string", "default": "N", "description": "Character to use for filling gaps." },
-        "qual_diff_threshold": { "type": "integer", "default": 10, "description": "Phred quality score difference required between paired-read bases at a mismatch position for the higher-quality base to be selected during SMOR consensus correction (generateSMORbam_correction.py -q argument). If below this threshold, the position is masked with fill_character." },
         "fill_gaps": { "type": "string", "default": "n", "description": "Character written at zero-coverage positions in the consensus sequence (passed to `--fill-gaps`)." },
         "mark_deletions": { "type": "string", "default": "_", "description": "Character written at deletion positions in the consensus sequence (passed to `--mark-deletions`)." },
-        "whole_genome": {"type": "boolean", "default": false, "description": "JSON file uses a whole genome reference, so don't write out the consensus, depth, and proportion arrays for each sample"},
-        "combine_output": { "type": "boolean", "default": true, "description": "Whether to combine output files." },
-        "stylesheet": { "type": ["string"], "default": "default_stylesheet/ASAP_fulldetails_web.xsl", "description": "XSLT stylesheet for transforming output." },
-        "out_file": { "type": ["string", "null"], "default": null, "description": "Name of the output HTML file." },
+        "suppress_per_base": {"type": "boolean", "default": false, "description": "Suppress the per-position output arrays (consensus, gapfilled_consensus, depths, proportions, n_reads, ref_positions) in each sample's XML. Set true for large/whole-genome references to keep XML sizes manageable."},
+        "prune_per_base": {"type": "boolean", "default": false, "description": "Prune the per-position numeric arrays (depths, proportions, n_reads, quality_discards) to only positions with depth >= depth, emitting a matching sparse ref_positions; the consensus sequence is kept full-length. Shrinks output for large/whole-genome references while retaining per-base data at covered positions. Ignored when suppress_per_base is true."},
         "codon_correction": { "type": "boolean", "default": false, "description": "Annotate pairs of SNPs that fall in the same codon (per GenBank CDS annotations) with read-level allele-linkage information (<codon_merge>/<combo> XML elements). Requires --reference_input to resolve to GenBank file(s) (.gb/.gbk/.genbank), or --asaptools_genbank_location to be set." },
         "codon_correction_error": { "type": "number", "default": 0.05, "description": "Frequency tolerance (0–1) between two same-codon SNPs' variant frequencies for their <codon_merge> linkage to be classified as 'complete' (both SNPs change together) vs. 'partial'." },
         "codon_correction_min_reads": { "type": "integer", "default": 10, "description": "Minimum spanning reads required to confirm codon-level SNP linkage." },
@@ -84,6 +83,14 @@
         "discover_roi_min_perc": { "type": "number", "default": 0.1, "description": "Minimum co-occurrence proportion (0–1) to report a linked SNP." },
         "discover_roi_min_reads": { "type": "integer", "default": 10, "description": "Minimum co-occurring read count to report a linked SNP." },
         "discover_roi_min_snp_perc": { "type": "number", "default": 0.05, "description": "Minimum variant frequency (0–1) for a SNP to be considered (as an anchor or linked candidate) in discover-roi linkage analysis. Skips low-frequency 'position of interest' SNPs to reduce search space." }
+      }
+    },
+    "historic_output_options": {
+      "title": "Historic ASAP Output (XML/HTML) Options",
+      "properties": {
+        "combine_output": { "type": "boolean", "default": false, "description": "Whether to combine output files." },
+        "stylesheet": { "type": ["string"], "default": "default_stylesheet/ASAP_fulldetails_web.xsl", "description": "XSLT stylesheet for transforming output." },
+        "out_file": { "type": ["string", "null"], "default": null, "description": "Name of the output HTML file." }
       }
     },
     "asaptools_options": {
@@ -141,6 +148,7 @@
     { "$ref": "#/$defs/smor_options" },
     { "$ref": "#/$defs/variant_calling_options" },
     { "$ref": "#/$defs/bam_processor_options" },
+    { "$ref": "#/$defs/historic_output_options" },
     { "$ref": "#/$defs/asaptools_options" },
     { "$ref": "#/$defs/ivar_options" },
     { "$ref": "#/$defs/containers" },
