@@ -178,8 +178,11 @@ process PROCESS_GENERATE_SNP_TABLE {
     def exclude_list = (params.asaptools_samples_to_remove == null || params.asaptools_samples_to_remove == "") ? "NONE" : params.asaptools_samples_to_remove
     def effective_prop = params.asaptools_snp_proportion ?: params.proportion
     def xls_toggle = params.asaptools_snp_table_xls.toString().toUpperCase()
-    def bed_param = (primer_bed && primer_bed.name != 'null') ? primer_bed : "NULL"
-    def aa_param  = (aa_rdata && aa_rdata.name != 'null') ? aa_rdata : "NULL"
+    // primer_bed / aa_rdata are staged into their own subdirs (see input block) so
+    // the shared `null` placeholder can't collide; compare on the basename so the
+    // 'null' sentinel still matches regardless of the staging subdirectory.
+    def bed_param = (primer_bed && primer_bed.name.tokenize('/').last() != 'null') ? primer_bed : "NULL"
+    def aa_param  = (aa_rdata && aa_rdata.name.tokenize('/').last() != 'null') ? aa_rdata : "NULL"
 
     """
     shopt -s nullglob

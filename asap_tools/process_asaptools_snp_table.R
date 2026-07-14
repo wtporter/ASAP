@@ -114,8 +114,8 @@ SNPS <- expand_codon_merges(SNPS, MIN_SNP_PERC)
 # --- Load Optional AA Data ---
 if (SNP_RDATA == "NULL" || !file.exists(SNP_RDATA) || is.null(SNP_RDATA)) {
   message("No SNP Amino Acid Rdata provided. Columns will be empty.")
-  Amino_Acids <- data.frame(SNP = character())
-  Gene_SNPS   <- data.frame(SNP = character())
+  Amino_Acids <- data.frame(assay_name = character(), SNP = character())
+  Gene_SNPS   <- data.frame(assay_name = character(), SNP = character())
 } else {
   message("SNP Amino Acid Rdata provided.")
   load(SNP_RDATA) 
