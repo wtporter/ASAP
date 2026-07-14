@@ -1030,7 +1030,7 @@ Available test tags: ``help``, ``rsv``, ``tb``, ``sc2``, ``bwa``, ``bowtie2``,
 ``minimap2``, ``multi_gb``, ``json_input``, ``excel_input``, ``fasta_input``,
 ``paired_end``, ``single_end``, ``ont``, ``primer_masking``, ``primer_only``,
 ``identity_filter``, ``smor``, ``ivar``, ``asaptools``, ``combine_output``,
-``whole_genome``, ``sc2_se_bwa``, ``tb_json_snp_aa``.
+``suppress_per_base``, ``prune_per_base``, ``sc2_se_bwa``, ``tb_json_snp_aa``.
 
 ``run_tests_parallel.sh`` runs the suite roughly in the time of its single
 longest test rather than the sum of all of them, by submitting one
@@ -1076,15 +1076,20 @@ Test Descriptions
 |      |                                                      | ``prepareJSONInput_nextflow.py``; BWA alignment;    |
 |      |                                                      | per-sample XML generation                           |
 +------+------------------------------------------------------+-----------------------------------------------------+
-| 9    | TB – FASTA Reference Input, Whole Genome Mode        | FASTA → JSON conversion; ``--whole_genome`` flag;   |
-|      |                                                      | per-sample XML generation                           |
+| 9    | TB – FASTA Reference Input, Whole Genome Mode        | FASTA → JSON conversion; ``--suppress_per_base``    |
+|      |                                                      | flag (omit all per-position arrays); per-sample     |
+|      |                                                      | XML generation                                      |
 +------+------------------------------------------------------+-----------------------------------------------------+
-| 10   | SC2 – Primer-Only BAM Filtering                      | ``--primer-only`` flag in ``maskPrimers.py``;       |
+| 10   | TB – FASTA Reference Input, Prune Per-Base Mode      | FASTA → JSON conversion; ``--prune_per_base`` flag  |
+|      |                                                      | (retain per-position arrays only where depth ≥      |
+|      |                                                      | ``--depth``); per-sample XML generation             |
++------+------------------------------------------------------+-----------------------------------------------------+
+| 11   | SC2 – Primer-Only BAM Filtering                      | ``--primer-only`` flag in ``maskPrimers.py``;       |
 |      |                                                      | only reads overlapping a primer region are kept;    |
 |      |                                                      | downstream ASAP processing continues from the       |
 |      |                                                      | filtered BAM; masking stats file validated          |
 +------+------------------------------------------------------+-----------------------------------------------------+
-| 11   | TB – JSON Input, asaptools + GenBank SNP→AA          | JSON reference with ``asaptools_genbank_location``  |
+| 12   | TB – JSON Input, asaptools + GenBank SNP→AA          | JSON reference with ``asaptools_genbank_location``  |
 |      |                                                      | supplying a separate ``.gb`` file for               |
 |      |                                                      | ``PROCESS_SNPS_TO_AMINOACIDS``; full asaptools      |
 |      |                                                      | suite; validates ``snp_reports/``, ``plots/``, and  |
