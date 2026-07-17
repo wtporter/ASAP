@@ -150,7 +150,7 @@ final_array$name_short <- name_map[final_array$name]
 message(paste("💾 Saving results"))
 
 save(final_asap, final_snps, final_array, file = paste0(file_name, "_ASAP_Data.Rdata"))
-cols_to_drop <- c("consensus_seq", "depths", "proportions", "quality_discards", "n_reads")
+cols_to_drop <- c("consensus_seq", "depths", "proportions", "quality_discards", "n_reads", "ref_positions")
 write.csv(final_asap[, !names(final_asap) %in% cols_to_drop, drop = FALSE], file = paste0(file_name, "_Summary.csv"), row.names = FALSE)
 
 message("✅ Success: Combined data saved to current working directory.")
