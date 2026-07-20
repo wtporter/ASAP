@@ -217,7 +217,10 @@ process PROCESS_QC_PLOTS {
 
     script:
     def poi_param      = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
-    def snp_prop_param = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
+    // Default to the proportion variants were actually called at (asap -p), so the
+    // figures' threshold line and filtering track the real run rather than the R
+    // script's own fallback. asaptools_snp_proportion stays an explicit override.
+    def snp_prop_param = params.asaptools_snp_proportion ?: params.proportion
     def interactive    = params.asaptools_interactive_plots.toString().toUpperCase()
     """
     process_asaptools_generate_figures.R \\
@@ -248,10 +251,12 @@ process PROCESS_SNP_PLOTS {
 
     script:
     def poi_param         = (poi_input == null || poi_input == "NULL" || poi_input == "") ? "NULL" : poi_input
-    def snp_prop_param    = (params.asaptools_snp_proportion == null) ? "NULL" : params.asaptools_snp_proportion
+    // See PROCESS_QC_PLOTS above: track the real calling proportion (asap -p).
+    def snp_prop_param    = params.asaptools_snp_proportion ?: params.proportion
     def breadth_threshold = params.asaptools_breadth_threshold ?: params.breadth
     def interactive       = params.asaptools_interactive_plots.toString().toUpperCase()
     def aa_param          = (aa_rdata && aa_rdata.name != 'null') ? aa_rdata : "NULL"
+    def consensus_param   = params.consensus_proportion ?: 0.8
     """
     shopt -s nullglob
     process_asaptools_snp_figures.R \\
@@ -261,6 +266,7 @@ process PROCESS_SNP_PLOTS {
         ${snp_prop_param} \\
         ${params.depth} \\
         ${breadth_threshold} \\
+        ${consensus_param} \\
         ${interactive} \\
         ${aa_param} \\
         genbank_input/*

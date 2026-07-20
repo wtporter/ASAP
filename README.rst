@@ -246,8 +246,6 @@ every tuning parameter.
      - ``--asaptools_positions_of_interest <csv>``
    * - Link same-codon SNPs / phase SNPs onto reads
      - ``--codon_correction`` / ``--discover_roi``
-   * - Combine per-sample results into one HTML report
-     - ``--combine_output``
    * - Analyze long reads (ONT / PacBio)
      - ``--technology ont`` (or ``pacbio``)
    * - Skip R post-processing (XML + HTML only)
